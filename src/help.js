@@ -13,7 +13,8 @@ Usage:
   ntn-gateway aggregate pages [--databases <id|title,...>] [--status "..."] [--all] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--limit N]
 
 Global flags:
-  --format json|human   Output format (default json).
+  --format json|human   Output format (default json). json is compact (single line) to save
+                        agent tokens; human is indented for people.
   --verbose, --format full   Include the full Notion API echo on writes and aggregate.
 
 Environment:
@@ -21,14 +22,18 @@ Environment:
   NOTION_API_KEY        Notion integration token.
 
 Output:
-  JSON is the default. Success payloads use {"ok":true,"data":...}.
+  JSON is the default and is emitted compactly (single line, no indentation) to save agent
+  tokens; pass --format human for indented, human-readable output.
+  Success payloads use {"ok":true,"data":...}.
   Errors use {"ok":false,"error":{"code":"...","message":"..."}}.
+  page get returns the page's typed properties and full Markdown content (plus id, url,
+  parent, last_edited_time, and an archived flag only when the page is archived).
   Writes and aggregate are terse by default to save context: page create returns the
   normalized page + reminder, block append returns {page_id, appended_count, block_ids},
   and aggregate pages groups rows by database, each page being {id, title, last_edited,
   agent_notes} (URL is inferable from the id; last_edited is date-only; status is omitted
-  because rows are grouped under it). Terse responses carry a "hint" pointing here. Pass
-  --verbose (or --format full) to also get the full API request/response echo and full
+  because rows are grouped under it). These terse responses carry a "hint" pointing here.
+  Pass --verbose (or --format full) to also get the full API request/response echo and full
   normalized pages.
 
   aggregate pages returns a "databases" array; each entry has {id, title, result_count,
