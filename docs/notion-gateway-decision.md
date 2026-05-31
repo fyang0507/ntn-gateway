@@ -149,7 +149,7 @@ Purpose:
 
 - `show`: identify the eligible database from Gateway context.
 - `database schema`: inspect exact writable properties and allowed option values just in time.
-- `ntn datasources query`: avoid likely duplicates with the official, schema-aware query surface.
+- `ntn datasources query`: read the rows of a single database and avoid likely duplicates with the official, schema-aware query surface. Requires a logged-in `ntn` (`ntn login` sets the default workspace, or set `NOTION_WORKSPACE_ID`); otherwise it fails with `No workspace selected`. We deliberately do not duplicate this as a `ntn-gateway database rows` command.
 - `page create`: create the database page with validated properties and optional body content.
 
 ### Update Existing Page
