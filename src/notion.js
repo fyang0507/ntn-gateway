@@ -43,19 +43,24 @@ class NotionGatewayApi {
     return this.client.databases.retrieve({ database_id: databaseId });
   }
 
-  queryDataSource(dataSourceId, body = {}) {
-    if (this.client.dataSources?.query) {
-      return collectPaginated((args) => this.client.dataSources.query(args), {
-        data_source_id: dataSourceId,
-        page_size: 100,
-        ...body,
-      });
+  async queryDataSource(dataSourceId, body = {}, { limit } = {}) {
+    const useDataSources = Boolean(this.client.dataSources?.query);
+    const call = useDataSources
+      ? (args) => this.client.dataSources.query(args)
+      : (args) => this.client.databases.query(args);
+    const idKey = useDataSources ? "data_source_id" : "database_id";
+
+    if (limit) {
+      // Bounded fetch for context protection: pull one page of up to limit+1 rows so we can
+      // report whether more exist without paginating the whole database into the response.
+      const response = await call({ [idKey]: dataSourceId, ...body, page_size: Math.min(limit + 1, 100) });
+      const fetched = Array.isArray(response.results) ? response.results : [];
+      const truncated = fetched.length > limit || Boolean(response.has_more && fetched.length >= limit);
+      return { results: fetched.slice(0, limit), truncated };
     }
-    return collectPaginated((args) => this.client.databases.query(args), {
-      database_id: dataSourceId,
-      page_size: 100,
-      ...body,
-    });
+
+    const results = await collectPaginated(call, { [idKey]: dataSourceId, page_size: 100, ...body });
+    return { results, truncated: false };
   }
 
   createPage(body) {

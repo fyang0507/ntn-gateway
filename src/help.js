@@ -10,7 +10,11 @@ Usage:
   ntn-gateway page create --database <data-source-id> --title "..." [--properties @props.json] [--content <markdown>|stdin|--stdin] [--dry-run]
   ntn-gateway page properties update <page-id> --properties @props.json [--dry-run]
   ntn-gateway block append <page-id> (--content <markdown>|stdin|--stdin) [--dry-run]
-  ntn-gateway aggregate pages [--status "..."] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+  ntn-gateway aggregate pages [--databases <id|title,...>] [--status "..."] [--all] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--limit N]
+
+Global flags:
+  --format json|human   Output format (default json).
+  --verbose, --format full   Include the full Notion API echo on writes and aggregate.
 
 Environment:
   NTN_GATEWAY_PAGE_ID   Gateway page ID.
@@ -19,6 +23,22 @@ Environment:
 Output:
   JSON is the default. Success payloads use {"ok":true,"data":...}.
   Errors use {"ok":false,"error":{"code":"...","message":"..."}}.
+  Writes and aggregate are terse by default to save context: page create returns the
+  normalized page + reminder, block append returns {page_id, appended_count, block_ids},
+  and aggregate pages groups rows by database, each page being {id, title, last_edited,
+  agent_notes} (URL is inferable from the id; last_edited is date-only; status is omitted
+  because rows are grouped under it). Terse responses carry a "hint" pointing here. Pass
+  --verbose (or --format full) to also get the full API request/response echo and full
+  normalized pages.
+
+  aggregate pages returns a "databases" array; each entry has {id, title, result_count,
+  truncated} plus a "by_status" map keyed by the live Notion status value (e.g. "In
+  progress", "Done") whose values are page summaries. Scope to specific databases with
+  --databases <id|title,...>. By default it hides completed work (done/complete/completed
+  statuses) and returns a "status_hint"; pass --all for every status, or --status "Done"
+  for just completed tasks. It caps results at 10 per database by default (most-recently-
+  edited first) to protect the context window and adds a top-level "note" when rows were
+  dropped. Narrow with --status/--since/--until or raise the cap with --limit N.
 
 Content:
   --content accepts inline Markdown or @file.md. Piped stdin is read automatically; --stdin explicitly reads stdin.

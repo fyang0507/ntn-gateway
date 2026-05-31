@@ -2,14 +2,21 @@ const { GatewayError } = require("./errors");
 
 function parseGlobalArgs(argv) {
   const args = [];
-  const options = { format: "json" };
+  const options = { format: "json", verbose: false };
 
   for (let i = 0; i < argv.length; i += 1) {
     const value = argv[i];
     if (value === "--format") {
-      options.format = argv[++i];
+      const next = argv[++i];
+      if (next === "full") {
+        options.verbose = true;
+      } else {
+        options.format = next;
+      }
     } else if (value === "--human") {
       options.format = "human";
+    } else if (value === "--verbose" || value === "-v" || value === "--full") {
+      options.verbose = true;
     } else if (value === "--help" || value === "-h") {
       options.help = true;
     } else {
@@ -18,7 +25,7 @@ function parseGlobalArgs(argv) {
   }
 
   if (!["json", "human"].includes(options.format)) {
-    throw new GatewayError("argument_invalid", "Format must be json or human.");
+    throw new GatewayError("argument_invalid", "Format must be json or human (use --verbose or --format full for the full API echo).");
   }
 
   return { args, options };

@@ -133,6 +133,30 @@ test("page create success reminds agents to track new databases on the Gateway p
   assert.match(result.reminder, /Gateway page/);
 });
 
+test("page create is terse by default and omits the request echo", async () => {
+  const result = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "New database"],
+    context()
+  );
+
+  assert.equal(result.page.id, "44444444-4444-4444-4444-444444444444");
+  assert.equal(result.plan, undefined);
+  assert.match(result.hint, /--verbose/);
+});
+
+test("page create --verbose echoes the full SDK request body and drops the hint", async () => {
+  const result = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "New database"],
+    context(),
+    { verbose: true }
+  );
+
+  assert.equal(result.page.id, "44444444-4444-4444-4444-444444444444");
+  assert.equal(result.plan.database.id, dataSourceId);
+  assert.deepEqual(result.plan.request.parent, { type: "data_source_id", data_source_id: dataSourceId });
+  assert.equal(result.hint, undefined);
+});
+
 test("page create fails closed on invalid option values", async () => {
   await assert.rejects(
     dispatch(
@@ -157,6 +181,8 @@ test("page get returns compact properties, full markdown content, and body previ
   assert.equal(result.properties.Status.value, "In progress");
   assert.equal(result.content, "Body preview");
   assert.deepEqual(result.body_preview, ["Body preview"]);
+  assert.equal(result.properties["Agent Notes"].value, "Saved for next month");
+  assert.equal(result.last_edited_time, "2026-05-25T10:00:00.000Z");
 });
 
 test("page get returns the full body as clean Markdown blocks", async () => {
@@ -185,6 +211,54 @@ test("block append converts markdown headings and bullets into native blocks", a
     ["heading_2", "bulleted_list_item", "bulleted_list_item"]
   );
   assert.equal(result.request.children[0].heading_2.rich_text[0].text.content, "Status");
+});
+
+test("block append is terse by default: page_id, count, and block ids only", async () => {
+  const result = await dispatch(
+    ["block", "append", pageId, "--content", "First\n\nSecond"],
+    context()
+  );
+
+  assert.equal(result.page_id, pageId);
+  assert.equal(result.appended_count, 2);
+  assert.equal(result.block_ids.length, 2);
+  assert.equal(result.response, undefined);
+  assert.match(result.hint, /--verbose/);
+});
+
+test("block append --verbose includes the full API response and drops the hint", async () => {
+  const result = await dispatch(
+    ["block", "append", pageId, "--content", "First\n\nSecond"],
+    context(),
+    { verbose: true }
+  );
+
+  assert.equal(result.appended_count, 2);
+  assert.equal(result.response.results.length, 2);
+  assert.equal(result.hint, undefined);
+});
+
+test("page properties update is terse by default and omits the change plan", async () => {
+  const result = await dispatch(
+    ["page", "properties", "update", pageId, "--properties", JSON.stringify({ Status: "Done" })],
+    context()
+  );
+
+  assert.equal(result.page.id, pageId);
+  assert.equal(result.plan, undefined);
+  assert.match(result.hint, /--verbose/);
+});
+
+test("page properties update --verbose returns the change plan and drops the hint", async () => {
+  const result = await dispatch(
+    ["page", "properties", "update", pageId, "--properties", JSON.stringify({ Status: "Done" })],
+    context(),
+    { verbose: true }
+  );
+
+  assert.equal(result.page.id, pageId);
+  assert.equal(result.plan.request.properties.Status.status.name, "Done");
+  assert.equal(result.hint, undefined);
 });
 
 test("page properties update dry-run validates and returns a change plan", async () => {
@@ -258,22 +332,127 @@ test("aggregate pages groups normalized results across the Gateway registry", as
   );
 
   assert.deepEqual(queriedDataSourceIds, [dataSourceId, secondDataSourceId]);
-  assert.deepEqual(result.queried.map((entry) => entry.id), [dataSourceId, secondDataSourceId]);
-  assert.equal(result.groups.commitments.length, 2);
+  assert.deepEqual(result.databases.map((entry) => entry.id), [dataSourceId, secondDataSourceId]);
+  assert.equal(result.databases[0].by_status["In progress"].length, 1);
+  assert.equal(result.databases[1].by_status["In progress"].length, 1);
 });
 
-test("aggregate pages rejects single-database filters", async () => {
+test("aggregate pages groups rows by live Notion status and drops status from each record", async () => {
+  const result = await dispatch(["aggregate", "pages", "--status", "In progress"], context());
+
+  const db = result.databases[0];
+  assert.equal(db.id, dataSourceId);
+  const summary = db.by_status["In progress"][0];
+  assert.deepEqual(Object.keys(summary).sort(), ["agent_notes", "id", "last_edited", "title"]);
+  assert.equal(summary.id, pageId);
+  assert.equal(summary.url, undefined);
+  assert.equal(summary.title, "Gateway task");
+  assert.equal(summary.status, undefined);
+  assert.equal(summary.agent_notes, "Saved for next month");
+  assert.equal(summary.last_edited, "2026-05-25");
+  assert.match(result.hint, /--verbose/);
+});
+
+test("aggregate pages --verbose returns full normalized pages grouped by status", async () => {
+  const result = await dispatch(
+    ["aggregate", "pages", "--status", "In progress"],
+    context(),
+    { verbose: true }
+  );
+
+  const page = result.databases[0].by_status["In progress"][0];
+  assert.equal(page.properties.Status.value, "In progress");
+  assert.ok("body_preview" in page);
+});
+
+test("aggregate pages applies a default per-database limit for context protection", async () => {
+  const result = await dispatch(["aggregate", "pages"], context());
+
+  assert.equal(result.limit, 10);
+  assert.equal(result.databases[0].truncated, false);
+  assert.equal(result.truncated, undefined);
+});
+
+test("aggregate pages caps per-database results and flags truncation with an actionable note", async () => {
+  const many = Array.from({ length: 30 }, (_, index) =>
+    notionPage(`page-${index}`, { type: "data_source_id", data_source_id: dataSourceId })
+  );
+  const result = await dispatch(["aggregate", "pages", "--limit", "5"], context({ queryResults: many }));
+
+  assert.equal(result.limit, 5);
+  assert.equal(result.databases[0].result_count, 5);
+  assert.equal(result.databases[0].truncated, true);
+  assert.equal(result.databases[0].by_status["In progress"].length, 5);
+  assert.equal(result.truncated, true);
+  assert.match(result.note, /--limit/);
+});
+
+test("aggregate pages hides completed work by default and queries only active statuses", async () => {
+  let filter;
+  const result = await dispatch(["aggregate", "pages"], context({ onQuery: (args) => { filter = args.filter; } }));
+
+  const serialized = JSON.stringify(filter);
+  assert.match(serialized, /In progress/);
+  assert.match(serialized, /Not started/);
+  assert.doesNotMatch(serialized, /Done/);
+  assert.match(result.status_hint, /--all/);
+});
+
+test("aggregate pages --all includes every status and drops the completed-work hint", async () => {
+  let filter = "unset";
+  const result = await dispatch(["aggregate", "pages", "--all"], context({ onQuery: (args) => { filter = args.filter; } }));
+
+  assert.equal(filter, undefined);
+  assert.equal(result.status_hint, undefined);
+});
+
+test("an explicit --status request suppresses the completed-work hint", async () => {
+  const result = await dispatch(["aggregate", "pages", "--status", "Done"], context());
+
+  assert.equal(result.status_hint, undefined);
+});
+
+test("aggregate pages rejects a non-positive --limit", async () => {
+  await assert.rejects(
+    dispatch(["aggregate", "pages", "--limit", "0"], context()),
+    /positive integer/
+  );
+});
+
+test("aggregate pages rejects the single-database --database flag", async () => {
   await assert.rejects(
     dispatch(["aggregate", "pages", "--database", dataSourceId], context()),
-    /cross-database command/
+    /--databases/
+  );
+});
+
+test("aggregate pages can scope to a subset of databases by id", async () => {
+  const result = await dispatch(
+    ["aggregate", "pages", "--databases", secondDataSourceId],
+    context({ blocks: [...gatewayBlocks(), gatewayTableRow("Reference", secondDataSourceId)] })
+  );
+
+  assert.deepEqual(result.databases.map((entry) => entry.id), [secondDataSourceId]);
+});
+
+test("aggregate pages --databases also matches by title", async () => {
+  const result = await dispatch(["aggregate", "pages", "--databases", "Technical Projects"], context());
+
+  assert.deepEqual(result.databases.map((entry) => entry.id), [dataSourceId]);
+});
+
+test("aggregate pages fails closed when --databases names an unapproved database", async () => {
+  await assert.rejects(
+    dispatch(["aggregate", "pages", "--databases", "99999999-9999-9999-9999-999999999999"], context()),
+    /not in the Gateway registry/
   );
 });
 
 test("aggregate pages skips databases with no matching requested status options", async () => {
   const result = await dispatch(["aggregate", "pages", "--status", "Blocked"], context());
 
-  assert.equal(result.queried[0].skipped, "no_matching_status_options");
-  assert.equal(result.groups.commitments.length, 0);
+  assert.equal(result.databases[0].skipped, "no_matching_status_options");
+  assert.equal(result.databases[0].by_status, undefined);
 });
 
 test("workflow presets are not part of the CLI surface", async () => {
@@ -399,7 +578,9 @@ function mockClient(options = {}) {
             results: options.pageBlocks || [{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "Body preview" }] } }],
           };
         },
-        append: async ({ children }) => ({ results: children }),
+        append: async ({ children }) => ({
+          results: children.map((child, index) => ({ ...child, id: `block-${index}` })),
+        }),
       },
     },
     dataSources: {
@@ -407,9 +588,13 @@ function mockClient(options = {}) {
         if (options.onDataSourceRetrieve) await options.onDataSourceRetrieve(data_source_id);
         return dataSource(data_source_id);
       },
-      query: async ({ data_source_id }) => {
-        if (options.queriedDataSourceIds) options.queriedDataSourceIds.push(data_source_id);
-        return { has_more: false, results: [notionPage(pageId, pageParent)] };
+      query: async (args) => {
+        if (options.queriedDataSourceIds) options.queriedDataSourceIds.push(args.data_source_id);
+        if (options.onQuery) options.onQuery(args);
+        return {
+          has_more: Boolean(options.queryHasMore),
+          results: options.queryResults || [notionPage(pageId, pageParent)],
+        };
       },
     },
     databases: {
@@ -481,10 +666,12 @@ function notionPage(id, parent) {
     id,
     url: `https://notion.so/${id}`,
     parent,
+    last_edited_time: "2026-05-25T10:00:00.000Z",
     properties: {
       Name: { type: "title", title: [{ plain_text: "Gateway task" }] },
       Status: { type: "status", status: { name: "In progress" } },
       Due: { type: "date", date: { start: "2026-05-20" } },
+      "Agent Notes": { type: "rich_text", rich_text: [{ plain_text: "Saved for next month" }] },
     },
   };
 }

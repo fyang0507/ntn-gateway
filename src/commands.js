@@ -1,7 +1,7 @@
 const { GatewayError } = require("./errors");
 const { normalizeSchema, normalizePage } = require("./normalize");
 const { buildPageProperties } = require("./properties");
-const { blockPlainText } = require("./text");
+const { blockPlainText, canonicalId } = require("./text");
 const { markdownFromBlocks } = require("./markdown");
 const { readJsonArg, readContentInput, blocksFromInput } = require("./io");
 
@@ -20,15 +20,34 @@ function pageStatus(page) {
   return undefined;
 }
 
-function classifyPage(page) {
-  const status = Object.values(page.properties || {}).find((property) => property.type === "status")?.status?.name || "";
-  const normalized = status.toLowerCase();
-  if (["done", "complete", "completed"].includes(normalized)) return "completed_work";
-  if (["not started", "planned", "backlog", "todo", "to do"].includes(normalized)) return "planning_candidates";
-  return "commitments";
+function pageTitle(normalized) {
+  const entry = Object.values(normalized.properties || {}).find((property) => property.type === "title");
+  return entry ? entry.value : undefined;
+}
+
+function agentNotes(normalized) {
+  const entry = Object.entries(normalized.properties || {}).find(([name]) => /agent\s*notes?/i.test(name));
+  return entry ? entry[1].value : undefined;
+}
+
+function compactPageSummary(page, normalized) {
+  // Status is omitted on purpose: aggregate groups rows by status, so repeating it per record is noise.
+  const summary = {
+    id: page.id,
+    title: pageTitle(normalized),
+  };
+  // Date-only (drop the time + offset) keeps the per-record footprint small in aggregate roll-ups.
+  if (page.last_edited_time) summary.last_edited = page.last_edited_time.slice(0, 10);
+  const notes = agentNotes(normalized);
+  if (notes !== undefined && notes !== null && notes !== "") summary.agent_notes = notes;
+  return summary;
 }
 
 const DATABASE_TRACKING_REMINDER = "After creating a database for future agent work, add it to the Gateway page as an inline @mention (type @ and pick the database, not a link-to-page block) so future agents can resolve its name and canonical data source ID via ntn-gateway show.";
+
+const VERBOSE_HINT = "Terse view. Re-run with --verbose (or --format full) for the full Notion API request/response and full page properties.";
+
+const DEFAULT_AGGREGATE_LIMIT = 10;
 
 class CommandHandlers {
   constructor({ api, gateway, stdin }) {
@@ -101,14 +120,19 @@ class CommandHandlers {
       };
     }
     const page = await this.api.createPage(body);
-    return {
-      plan: { database: { id: dataSourceId, title: schema.title }, request: body },
+    const result = {
       page: normalizePage(page),
       reminder: DATABASE_TRACKING_REMINDER,
     };
+    if (options.verbose) {
+      result.plan = { database: { id: dataSourceId, title: schema.title }, request: body };
+    } else {
+      result.hint = VERBOSE_HINT;
+    }
+    return result;
   }
 
-  async pagePropertiesUpdate(pageId, propertiesArg, dryRun) {
+  async pagePropertiesUpdate(pageId, propertiesArg, dryRun, verbose = false) {
     const current = await this.api.retrievePage(pageId);
     const registryEntry = await this.gateway.assertAllowedPage(current);
     const dataSourceId = current.parent.data_source_id || current.parent.database_id;
@@ -123,7 +147,10 @@ class CommandHandlers {
     };
     if (dryRun) return { plan };
     const page = await this.api.updatePage(pageId, body);
-    return { plan, page: normalizePage(page) };
+    const result = { page: normalizePage(page) };
+    if (verbose) result.plan = plan;
+    else result.hint = VERBOSE_HINT;
+    return result;
   }
 
   async blockAppend(pageId, options = {}) {
@@ -142,50 +169,72 @@ class CommandHandlers {
       };
     }
     const response = await this.api.appendBlocks(pageId, children);
-    return {
-      page: { id: pageId },
+    const result = {
+      page_id: pageId,
       appended_count: children.length,
-      response,
+      block_ids: (response.results || []).map((block) => block.id).filter(Boolean),
     };
+    if (options.verbose) result.response = response;
+    else result.hint = VERBOSE_HINT;
+    return result;
+  }
+
+  selectDatabases(registry, spec) {
+    if (!spec) return registry;
+    const tokens = spec.split(",").map((token) => token.trim()).filter(Boolean);
+    const selected = [];
+    for (const token of tokens) {
+      const match = registry.find(
+        (entry) => canonicalId(entry.id) === canonicalId(token) || entry.title.toLowerCase() === token.toLowerCase()
+      );
+      if (!match) {
+        throw new GatewayError("argument_invalid", `Database "${token}" is not in the Gateway registry. Run ntn-gateway show to see approved databases.`);
+      }
+      if (!selected.includes(match)) selected.push(match);
+    }
+    return selected;
   }
 
   async aggregatePages(options) {
-    const registry = await this.gateway.registry();
-    const groups = {
-      commitments: [],
-      completed_work: [],
-      stale_work: [],
-      planning_candidates: [],
-    };
-    const queried = [];
+    const registry = this.selectDatabases(await this.gateway.registry(), options.databases);
+    const limit = options.limit ?? DEFAULT_AGGREGATE_LIMIT;
+    const databases = [];
+    let truncatedAny = false;
 
     for (const entry of registry) {
       const schema = normalizeSchema(await this.api.retrieveDataSource(entry.id));
       const query = buildAggregateQuery(schema, options);
       if (query.__skip) {
-        queried.push({ id: entry.id, title: entry.title, result_count: 0, skipped: "no_matching_status_options" });
+        databases.push({ id: entry.id, title: entry.title, result_count: 0, skipped: "no_matching_status_options" });
         continue;
       }
-      const results = await this.api.queryDataSource(entry.id, query);
-      const dateName = firstPropertyOfType(schema, "date", ["Date", "Start Date", "Due", "Completed"]);
-      queried.push({ id: entry.id, title: entry.title, result_count: results.length });
+      const { results, truncated } = await this.api.queryDataSource(entry.id, query, { limit });
+      if (truncated) truncatedAny = true;
 
+      // Group rows by database (named once), then by their live Notion status value.
+      const byStatus = {};
       for (const page of results) {
         const normalized = normalizePage(page);
-        const group = classifyPage(page);
-        groups[group].push({ database: { id: entry.id, title: entry.title }, page: normalized });
-
-        if (options.since && dateName) {
-          const value = normalized.properties[dateName]?.value?.start;
-          const status = pageStatus(page);
-          if (value && value < options.since && status && !["Done", "Complete", "Completed"].includes(status)) {
-            groups.stale_work.push({ database: { id: entry.id, title: entry.title }, page: normalized });
-          }
-        }
+        const view = options.verbose ? normalized : compactPageSummary(page, normalized);
+        const status = pageStatus(page) || "No status";
+        (byStatus[status] ||= []).push(view);
       }
+
+      const dbEntry = { id: entry.id, title: entry.title, result_count: results.length, truncated };
+      if (Object.keys(byStatus).length > 0) dbEntry.by_status = byStatus;
+      databases.push(dbEntry);
     }
 
-    return { filters: options, queried, groups };
+    const result = { filters: options, limit, databases };
+    if (truncatedAny) {
+      result.truncated = true;
+      result.note = `Results capped at ${limit} per database (most-recently-edited first). Narrow with --status/--since/--until or raise --limit to see more.`;
+    }
+    if (!options.status && !options.allStatus) {
+      result.status_hint = 'Completed work is hidden by default. Pass --all for every status, or --status "Done" for just completed tasks.';
+    }
+    if (!options.verbose) result.hint = VERBOSE_HINT;
+    return result;
   }
 
 }

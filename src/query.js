@@ -1,3 +1,9 @@
+const DONE_STATUS_NAMES = new Set(["done", "complete", "completed"]);
+
+function isDoneStatus(name) {
+  return DONE_STATUS_NAMES.has(String(name || "").trim().toLowerCase());
+}
+
 function statusFilter(name, rawValues, schemaProperty) {
   const values = rawValues.split(",").map((value) => value.trim()).filter(Boolean);
   const allowed = Array.isArray(schemaProperty?.options) ? new Set(schemaProperty.options.map((option) => option.name)) : undefined;
@@ -34,7 +40,21 @@ function firstPropertyOfType(schema, type, preferredNames = []) {
 function buildAggregateQuery(schema, options) {
   const statusName = firstPropertyOfType(schema, "status", ["Status"]) || firstPropertyOfType(schema, "select", ["Status"]);
   const dateName = firstPropertyOfType(schema, "date", ["Date", "Start Date", "Due", "Completed"]);
-  const status = options.status && statusName ? statusFilter(statusName, options.status, schema.properties[statusName]) : undefined;
+
+  let status;
+  if (statusName) {
+    if (options.status) {
+      status = statusFilter(statusName, options.status, schema.properties[statusName]);
+    } else if (!options.allStatus) {
+      // Default working view hides completed work: include only the non-done status options.
+      const active = (schema.properties[statusName].options || [])
+        .map((option) => option.name)
+        .filter((name) => !isDoneStatus(name));
+      if (active.length > 0) {
+        status = statusFilter(statusName, active.join(","), schema.properties[statusName]);
+      }
+    }
+  }
   if (status?.skip) {
     return { __skip: true };
   }
@@ -42,7 +62,9 @@ function buildAggregateQuery(schema, options) {
     status,
     dateName ? dateFilter(dateName, options.since, options.until) : undefined,
   ]);
-  return filter ? { filter } : {};
+  // Most-recently-edited first so a truncated sample surfaces the freshest, most relevant rows.
+  const sorts = [{ timestamp: "last_edited_time", direction: "descending" }];
+  return filter ? { filter, sorts } : { sorts };
 }
 
 module.exports = { buildAggregateQuery, firstPropertyOfType };

@@ -16,8 +16,9 @@ async function buildHandlers(context) {
   return new CommandHandlers({ api, gateway, stdin: context.stdin });
 }
 
-async function dispatch(args, context) {
+async function dispatch(args, context, options = {}) {
   const handlers = await buildHandlers(context);
+  const verbose = Boolean(options.verbose);
   const [noun, verb, subcommand, ...rest] = args;
 
   if (noun === "show") return handlers.show();
@@ -41,19 +42,20 @@ async function dispatch(args, context) {
       dryRun: Boolean(flags.dry_run),
       content: flags.content,
       stdin: Boolean(flags.stdin),
+      verbose,
     });
   }
 
   if (noun === "page" && verb === "properties" && subcommand === "update") {
     const pageId = requireArg(rest[0], "page-id");
     const { flags } = parseFlags(rest.slice(1));
-    return handlers.pagePropertiesUpdate(pageId, requireFlag(flags, "properties"), Boolean(flags.dry_run));
+    return handlers.pagePropertiesUpdate(pageId, requireFlag(flags, "properties"), Boolean(flags.dry_run), verbose);
   }
 
   if (noun === "page" && verb === "update") {
     const pageId = requireArg(subcommand, "page-id");
     const { flags } = parseFlags(rest);
-    return handlers.pagePropertiesUpdate(pageId, requireFlag(flags, "properties"), Boolean(flags.dry_run));
+    return handlers.pagePropertiesUpdate(pageId, requireFlag(flags, "properties"), Boolean(flags.dry_run), verbose);
   }
 
   if (noun === "block" && verb === "append") {
@@ -63,6 +65,7 @@ async function dispatch(args, context) {
       content: flags.content,
       stdin: Boolean(flags.stdin),
       dryRun: Boolean(flags.dry_run),
+      verbose,
     });
   }
 
@@ -71,13 +74,27 @@ async function dispatch(args, context) {
     if (flags.database) {
       throw new GatewayError(
         "argument_invalid",
-        "aggregate pages is a cross-database command and does not accept --database. Use official ntn datasources query for one-database ad hoc searches."
+        "aggregate pages is a cross-database command. Use --databases <id|title,...> to scope to specific Gateway databases, or official ntn datasources query for one-database ad hoc searches."
       );
+    }
+    if (flags.databases === true) {
+      throw new GatewayError("argument_invalid", "--databases requires a comma-separated list of Gateway data source IDs or titles.");
+    }
+    let limit;
+    if (flags.limit !== undefined && flags.limit !== true) {
+      limit = Number.parseInt(flags.limit, 10);
+      if (!Number.isInteger(limit) || limit < 1) {
+        throw new GatewayError("argument_invalid", "--limit must be a positive integer.");
+      }
     }
     return handlers.aggregatePages({
       status: flags.status,
+      allStatus: Boolean(flags.all),
       since: flags.since,
       until: flags.until,
+      databases: typeof flags.databases === "string" ? flags.databases : undefined,
+      limit,
+      verbose,
     });
   }
 
@@ -91,7 +108,7 @@ async function main(argv, context) {
     return 0;
   }
 
-  const exitCode = await runWithOutput(context.stdout, options, () => dispatch(args, context));
+  const exitCode = await runWithOutput(context.stdout, options, () => dispatch(args, context, options));
   return exitCode;
 }
 
