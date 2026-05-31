@@ -1,8 +1,11 @@
 const { cpSync, existsSync, mkdirSync, rmSync } = require("node:fs");
 const { homedir } = require("node:os");
 const { join, resolve } = require("node:path");
+const { loadEnv } = require("../src/config");
 
 const WORKSPACE_MARKER = join(".agents", "workspace.yaml");
+
+loadEnv();
 
 function expandHome(value) {
   if (value === "~") return homedir();
@@ -39,15 +42,17 @@ function resolveDataRepo() {
 }
 
 const dataRepo = resolveDataRepo();
-const SKILL_DIR = "notion-gateway";
-const LEGACY_SKILL_DIRS = ["notion-gateway"];
-const dest = join(dataRepo, ".agents", "skills", SKILL_DIR);
+const SKILL_DIRS = ["notion-gateway", "technical-reading-bookmark"];
+const LEGACY_SKILL_DIRS = [];
 
-mkdirSync(dest, { recursive: true });
-rmSync(dest, { recursive: true, force: true });
 for (const legacySkillDir of LEGACY_SKILL_DIRS) {
   rmSync(join(dataRepo, ".agents", "skills", legacySkillDir), { recursive: true, force: true });
 }
-cpSync(join("skills", SKILL_DIR), dest, { recursive: true });
 
-console.log(`Skill synced -> ${dest}`);
+for (const skillDir of SKILL_DIRS) {
+  const dest = join(dataRepo, ".agents", "skills", skillDir);
+  mkdirSync(dest, { recursive: true });
+  rmSync(dest, { recursive: true, force: true });
+  cpSync(join("skills", skillDir), dest, { recursive: true });
+  console.log(`Skill synced -> ${dest}`);
+}

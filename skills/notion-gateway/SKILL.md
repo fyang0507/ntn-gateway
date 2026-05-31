@@ -11,6 +11,7 @@ Notion is the durable collaboration surface, not merely a place to store text. T
 
 - Treat the live Notion workspace as source of truth; inspect it before acting when current state matters.
 - Start with `ntn-gateway show`. Database names are annotated inline with canonical data source IDs.
+- If working outside the `ntn-gateway` repo, still run `ntn-gateway show` before writes; the CLI should load env from the caller workspace or its package root, and `config_missing` means the runtime install/env is not prepared.
 - Keep the Gateway page high-level: add durable locators or operating notes there only when future agents need them, not as a schema dump.
 - Use official `ntn` or the Notion API only as a comparator or narrow escape hatch after the approved surface is identified.
 
@@ -23,6 +24,8 @@ Choose the lightest durable action that preserves shared state:
 - For new evidence, logs, summaries, handoffs, or results: append body blocks to the relevant page.
 - For broad, ambiguous, or schema-affecting changes: produce a dry-run plan before writing.
 - For duplicate checks or ad hoc search: use `ntn-gateway show` to find the approved data source, then query that data source with official `ntn datasources query <data-source-id> --filter ...`.
+- For source links in page bodies, put the URL on its own paragraph or use `Source: [label](URL)`; the CLI converts source-only links into Notion bookmark blocks instead of plain Markdown or HTML.
+- Use `Agent Notes` property only for durable future-agent behavior, such as "skip this for today suggestions because Fred saved it for next month."
 
 ## Page Boundary
 

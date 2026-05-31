@@ -43,6 +43,36 @@ test("page create dry-run accepts body content", async () => {
   );
 });
 
+test("page create dry-run converts source links to bookmark blocks", async () => {
+  const sourceUrl = "https://claude.com/blog/using-claude-code-the-unreasonable-effectiveness-of-html";
+  const result = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "Ship gateway", "--content", `Source: [Using Claude Code](${sourceUrl})\n\nNotes`, "--dry-run"],
+    context()
+  );
+
+  assert.equal(result.dry_run, true);
+  assert.deepEqual(result.plan.request.children[0], {
+    object: "block",
+    type: "bookmark",
+    bookmark: { url: sourceUrl },
+  });
+  assert.equal(result.plan.request.children[1].paragraph.rich_text[0].text.content, "Notes");
+});
+
+test("page create dry-run converts inline markdown links to rich text links", async () => {
+  const sourceUrl = "https://claude.com/blog/using-claude-code-the-unreasonable-effectiveness-of-html";
+  const result = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "Ship gateway", "--content", `Read [the article](${sourceUrl}) carefully.`, "--dry-run"],
+    context()
+  );
+
+  assert.deepEqual(result.plan.request.children[0].paragraph.rich_text, [
+    { type: "text", text: { content: "Read " } },
+    { type: "text", text: { content: "the article", link: { url: sourceUrl } } },
+    { type: "text", text: { content: " carefully." } },
+  ]);
+});
+
 test("page create dry-run accepts body content from stdin", async () => {
   const result = await dispatch(
     ["page", "create", "--database", dataSourceId, "--title", "Ship gateway", "--stdin", "--dry-run"],

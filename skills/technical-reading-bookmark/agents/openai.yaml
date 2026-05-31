@@ -1,0 +1,4 @@
+interface:
+  display_name: "Technical Reading Bookmark"
+  short_description: "Save tech reads to Notion."
+  default_prompt: "Use $technical-reading-bookmark to bookmark this technical reading item in Notion."
