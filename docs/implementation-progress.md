@@ -2,6 +2,17 @@
 
 Date: 2026-05-20
 
+## 2026-05-31 Lossless Link Serialization: child-database/page links and real page mentions (#2, #5)
+
+- `show` no longer glues a linked database's ID onto the preceding heading or drops its name. In `parseGatewayBlocks`, a `link_to_page` (database) now claims its own content line and is resolved to `Name: <canonical-data-source-id>`; the heading line stays clean. This fixes the case where a heading (e.g. "Family and Home") already covered one database (Parenting mention) and a second linked database (Home Improvement) was previously rendered only as a bare ID welded to the heading.
+- Database mentions carry their own name from the rich-text `plain_text` instead of borrowing the section heading, preserving the name↔ID mapping per link.
+- `show` now also surfaces page links: `link_to_page` (page) blocks and inline page mentions are collected as `pageCandidates`, resolved to the page title, and rendered as `Title [[page-id]]` on their own line (`unresolved_pages` reports any that fail to resolve). Previously page links were silently dropped.
+- Page-body Markdown now supports real, clickable page links (#5): `[[page-id]]` (or `[[page-id|Label]]`, label dropped) in `--content` becomes a native Notion page mention rich-text object; `page get` serializes page mentions back to `[[page-id]]` so they round-trip. Relation properties were already writable via a JSON array of page IDs; documented in help/SKILL.
+- The inline parser in `src/markdown.js` was unified into a single `INLINE_PATTERN` (named groups) covering page mentions, HTML anchors, Markdown links, and bare URLs, replacing the prior `LINK_PATTERN` while keeping existing link/annotation output identical.
+- Consistency: a database/page mention that is alone on its line now renders as a bullet (`- Name: id` / `- Name [[id]]`), matching `link_to_page` links, so all Gateway database entries look uniform regardless of whether they were authored as inline mentions or link-to-page blocks.
+- Convention: inline `@`-mentions are the preferred way to register a database on the Gateway page (the mention carries the name; a `link_to_page` block carries only the id). `database create` now returns a reminder to add new databases as inline mentions, the Gateway page's own guidance bullet was updated to say the same, and the live Gateway page's four `link_to_page` database blocks were migrated to inline database mentions (which also corrected name drift, e.g. heading "Book" vs canonical "Books").
+- Tests: added gateway cases (linked DB gets its own line and never welds onto a heading; mixed heading+mention+link; page links/mentions as page candidates), a CLI `show` page-link rendering case, a `database create` reminder case, and markdown cases for `[[page-id]]` parse/serialize/round-trip. Full suite: 65 passing.
+
 ## 2026-05-31 Dual Markdown ↔ Notion-Block Body Content (#1)
 
 - Body content is now a true Markdown ↔ Notion-block boundary in both directions, fixing the prior behavior where `## heading`/`- bullet` were stored as literal paragraph text and reads returned only a truncated `body_preview`.

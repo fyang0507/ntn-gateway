@@ -1,5 +1,5 @@
 const { GatewayError } = require("./errors");
-const { blockPlainText, canonicalId, compactId } = require("./text");
+const { blockPlainText, canonicalId, compactId, plainTextFromRichText } = require("./text");
 const { normalizeSchema } = require("./normalize");
 
 const RULE_TYPES = new Set(["paragraph", "bulleted_list_item", "numbered_list_item", "to_do", "quote", "callout"]);
@@ -16,10 +16,15 @@ function collectMentions(block) {
   const mentions = [];
   for (const item of richText) {
     if (item.type === "mention" && item.mention) {
-      mentions.push(item.mention);
+      mentions.push({ mention: item.mention, name: (item.plain_text || "").trim() });
     }
   }
   return mentions;
+}
+
+function pageTitle(page) {
+  const titleProperty = Object.values(page.properties || {}).find((property) => property.type === "title");
+  return plainTextFromRichText(titleProperty?.title || []).trim() || "Untitled page";
 }
 
 function mentionedDatabaseId(mention) {
@@ -69,6 +74,7 @@ function pushLine(lines, line) {
 function parseGatewayBlocks(blocks) {
   const contentLines = [];
   const databaseCandidates = new Map();
+  const pageCandidates = new Map();
   let currentHeading = "";
   let currentHeadingLineIndex;
 
@@ -96,15 +102,29 @@ function parseGatewayBlocks(blocks) {
       });
     }
 
-    if (block.type === "link_to_page" && block.link_to_page?.type === "database_id") {
-      const databaseId = block.link_to_page.database_id;
-      databaseCandidates.set(compactId(databaseId), {
-        id: databaseId,
-        database_id: databaseId,
-        title: currentHeading || "Linked database",
-        source: "link_to_page_database",
-        lineIndex: currentHeadingLineIndex,
-      });
+    if (block.type === "link_to_page") {
+      const link = block.link_to_page || {};
+      if (link.type === "database_id" && !databaseCandidates.has(compactId(link.database_id))) {
+        // The block carries no name; resolve it later and render on its own line
+        // rather than gluing the id onto the preceding heading.
+        databaseCandidates.set(compactId(link.database_id), {
+          id: link.database_id,
+          database_id: link.database_id,
+          title: currentHeading || "Linked database",
+          source: "link_to_page_database",
+          lineIndex: pushLine(contentLines, ""),
+          ownsLine: true,
+        });
+      } else if (link.type === "page_id" && !pageCandidates.has(compactId(link.page_id))) {
+        pageCandidates.set(compactId(link.page_id), {
+          id: canonicalId(link.page_id),
+          title: currentHeading || "Linked page",
+          source: "link_to_page",
+          lineIndex: pushLine(contentLines, ""),
+          ownsLine: true,
+        });
+      }
+      continue;
     }
 
     const ids = idsFromText(text);
@@ -122,17 +142,31 @@ function parseGatewayBlocks(blocks) {
       });
     }
 
-    for (const mention of collectMentions(block)) {
-      const id = mentionedDatabaseId(mention);
-      if (id) {
+    for (const { mention, name } of collectMentions(block)) {
+      // A mention that is alone on its line owns that line, so it renders as a
+      // bullet ("- Name: id" / "- Name [[id]]") consistent with link_to_page links.
+      const aloneOnLine = Boolean(name) && contentLineIndex !== undefined && text.trim() === name.trim();
+      const databaseId = mentionedDatabaseId(mention);
+      if (databaseId) {
         const isDatabaseMention = mention.type === "database";
-        databaseCandidates.set(compactId(id), {
-          id,
-          database_id: isDatabaseMention ? id : undefined,
-          title: currentHeading || text || "Mentioned database",
+        const candidate = {
+          id: databaseId,
+          database_id: isDatabaseMention ? databaseId : undefined,
+          title: name || currentHeading || text || "Mentioned database",
           source: "database_mention",
           lineIndex: contentLineIndex ?? currentHeadingLineIndex,
-        });
+        };
+        if (aloneOnLine) candidate.ownsLine = true;
+        databaseCandidates.set(compactId(databaseId), candidate);
+      } else if (mention.type === "page" && mention.page?.id) {
+        const candidate = {
+          id: canonicalId(mention.page.id),
+          title: name || currentHeading || "Linked page",
+          source: "page_mention",
+          lineIndex: contentLineIndex ?? currentHeadingLineIndex,
+        };
+        if (aloneOnLine) candidate.ownsLine = true;
+        pageCandidates.set(compactId(mention.page.id), candidate);
       }
     }
   }
@@ -141,6 +175,7 @@ function parseGatewayBlocks(blocks) {
     content: markdownFromLines(contentLines),
     contentLines,
     databaseCandidates: [...databaseCandidates.values()],
+    pageCandidates: [...pageCandidates.values()],
   };
 }
 
@@ -152,17 +187,41 @@ function publicUnresolvedDatabase(entry) {
   };
 }
 
-function addInlineDatabaseReferences(contentLines, databases, unresolved) {
+function renderGatewayContent(contentLines, { databases, unresolvedDatabases, pages, unresolvedPages }) {
   const lines = [...contentLines];
+
+  const setLine = (entry, line) => {
+    if (Number.isInteger(entry.lineIndex)) lines[entry.lineIndex] = line;
+  };
+  const appendToLine = (entry, suffix) => {
+    if (!Number.isInteger(entry.lineIndex) || !lines[entry.lineIndex]) return;
+    lines[entry.lineIndex] = `${lines[entry.lineIndex]}${suffix}`;
+  };
+
   for (const database of databases) {
-    if (!Number.isInteger(database.lineIndex) || !lines[database.lineIndex]) continue;
-    if (compactId(lines[database.lineIndex]).includes(compactId(database.id))) continue;
-    lines[database.lineIndex] = `${lines[database.lineIndex]}: ${database.id}`;
+    if (database.ownsLine) {
+      setLine(database, `- ${database.title}: ${database.id}`);
+    } else if (!compactId(lines[database.lineIndex] || "").includes(compactId(database.id))) {
+      appendToLine(database, `: ${database.id}`);
+    }
   }
-  for (const database of unresolved) {
-    if (!Number.isInteger(database.lineIndex) || !lines[database.lineIndex]) continue;
-    lines[database.lineIndex] = `${lines[database.lineIndex]} (unresolved: ${database.error})`;
+  for (const page of pages) {
+    const reference = `[[${page.id}]]`;
+    if (page.ownsLine) {
+      setLine(page, `- ${page.title} ${reference}`);
+    } else if (!(lines[page.lineIndex] || "").includes(reference)) {
+      appendToLine(page, ` ${reference}`);
+    }
   }
+  for (const database of unresolvedDatabases) {
+    if (database.ownsLine) setLine(database, `- ${database.title} (unresolved: ${database.error})`);
+    else appendToLine(database, ` (unresolved: ${database.error})`);
+  }
+  for (const page of unresolvedPages) {
+    if (page.ownsLine) setLine(page, `- ${page.title} (unresolved: ${page.error})`);
+    else appendToLine(page, ` (unresolved: ${page.error})`);
+  }
+
   return markdownFromLines(lines);
 }
 
@@ -180,10 +239,21 @@ function summarizeDatabase(candidate, schema) {
 
 async function settleCandidate(candidate, resolve) {
   try {
-    return { ok: true, value: { ...await resolve(candidate), lineIndex: candidate.lineIndex } };
+    return {
+      ok: true,
+      value: { ...await resolve(candidate), lineIndex: candidate.lineIndex, ownsLine: candidate.ownsLine },
+    };
   } catch (error) {
     return { ok: false, value: { ...candidate, error: error.message } };
   }
+}
+
+function publicUnresolvedPage(entry) {
+  return {
+    title: entry.title,
+    id: entry.id,
+    error: entry.error,
+  };
 }
 
 class GatewayService {
@@ -196,19 +266,25 @@ class GatewayService {
     const page = await this.api.retrievePage(this.config.gatewayPageId);
     const blocks = await this.api.retrieveBlocks(this.config.gatewayPageId);
     const parsed = parseGatewayBlocks(blocks);
-    const settled = await Promise.all(
+    const settledDatabases = await Promise.all(
       parsed.databaseCandidates.map((candidate) => settleCandidate(candidate, (item) => this.resolveCandidate(item)))
     );
-    const databases = settled.filter((result) => result.ok).map((result) => result.value);
-    const unresolved = settled.filter((result) => !result.ok).map((result) => result.value);
+    const settledPages = await Promise.all(
+      (parsed.pageCandidates || []).map((candidate) => settleCandidate(candidate, (item) => this.resolvePage(item)))
+    );
+    const databases = settledDatabases.filter((result) => result.ok).map((result) => result.value);
+    const unresolvedDatabases = settledDatabases.filter((result) => !result.ok).map((result) => result.value);
+    const pages = settledPages.filter((result) => result.ok).map((result) => result.value);
+    const unresolvedPages = settledPages.filter((result) => !result.ok).map((result) => result.value);
 
     return {
       gateway: {
         id: page.id,
         last_edited_time: page.last_edited_time,
       },
-      content: addInlineDatabaseReferences(parsed.contentLines, databases, unresolved),
-      unresolved_databases: unresolved.map(publicUnresolvedDatabase),
+      content: renderGatewayContent(parsed.contentLines, { databases, unresolvedDatabases, pages, unresolvedPages }),
+      unresolved_databases: unresolvedDatabases.map(publicUnresolvedDatabase),
+      unresolved_pages: unresolvedPages.map(publicUnresolvedPage),
     };
   }
 
@@ -239,6 +315,17 @@ class GatewayService {
 
     const schema = await this.api.retrieveDataSource(candidate.id);
     return summarizeDatabase(candidate, schema);
+  }
+
+  async resolvePage(candidate) {
+    const page = await this.api.retrievePage(candidate.id);
+    return {
+      id: canonicalId(page.id),
+      title: pageTitle(page),
+      kind: "page",
+      source: candidate.source,
+      url: page.url,
+    };
   }
 
   async assertAllowedDataSource(dataSourceId) {

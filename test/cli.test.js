@@ -17,6 +17,15 @@ test("database schema rejects IDs absent from Gateway registry", async () => {
   );
 });
 
+test("database create dry-run reminds agents to add the database as an inline mention", async () => {
+  const result = await dispatch(["database", "create", "--title", "New area", "--dry-run"], context());
+
+  assert.equal(result.dry_run, true);
+  assert.equal(result.plan.title, "New area");
+  assert.match(result.reminder, /inline @mention/);
+  assert.match(result.reminder, /canonical data source ID/);
+});
+
 test("page create dry-run validates options and emits SDK request body", async () => {
   const result = await dispatch(
     ["page", "create", "--database", dataSourceId, "--title", "Ship gateway", "--properties", JSON.stringify({ Status: "In progress", Tags: ["Agent"] }), "--dry-run"],
@@ -302,7 +311,27 @@ test("Gateway database links are resolved to canonical data source IDs", async (
   assert.equal(result.gateway.url, undefined);
   assert.equal(result.gateway_markdown, undefined);
   assert.doesNotMatch(result.content, /Gateway Registry/);
-  assert.match(result.content, /# Linked Projects: 66666666-6666-6666-6666-666666666666/);
+  // The linked database gets its own line with the resolved data-source name + canonical id,
+  // and the id is NOT glued onto the heading.
+  assert.match(result.content, /# Linked Projects\n- Technical Projects: 66666666-6666-6666-6666-666666666666/);
+  assert.doesNotMatch(result.content, /# Linked Projects: /);
+});
+
+test("Gateway page links render as resolved title plus a [[page-id]] reference", async () => {
+  const linkedPageId = "cb43fc31-7a14-4cc2-b1d4-864c169e1a12";
+  const result = await dispatch(
+    ["show"],
+    context({
+      blocks: [
+        { type: "heading_1", heading_1: { rich_text: [{ plain_text: "Related work" }] } },
+        { type: "link_to_page", link_to_page: { type: "page_id", page_id: linkedPageId } },
+      ],
+    })
+  );
+
+  // notionPage() titles non-gateway pages "Gateway task"; the id is NOT glued onto the heading.
+  assert.match(result.content, /# Related work\n- Gateway task \[\[cb43fc31-7a14-4cc2-b1d4-864c169e1a12\]\]/);
+  assert.doesNotMatch(result.content, /# Related work: /);
 });
 
 test("show resolves Gateway references in parallel", async () => {

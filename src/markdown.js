@@ -1,4 +1,4 @@
-const { plainTextFromRichText } = require("./text");
+const { plainTextFromRichText, canonicalId } = require("./text");
 
 // ---------------------------------------------------------------------------
 // Shared inline helpers
@@ -28,11 +28,27 @@ function linkedTextRichText(content, url) {
   return { type: "text", text: { content, link: { url } } };
 }
 
+function pageMentionRichText(id) {
+  return { type: "mention", mention: { type: "page", page: { id } } };
+}
+
 // ---------------------------------------------------------------------------
 // Markdown -> Notion rich text (inline)
 // ---------------------------------------------------------------------------
 
-const LINK_PATTERN = /<a\s+[^>]*href=(["'])(https?:\/\/[^"']+)\1[^>]*>[\s\S]*?<\/a>|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>)"']+)/gi;
+// A 32-hex Notion id, with or without dashes (used for [[page-id]] mentions).
+const NOTION_ID = "[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}";
+
+// Inline tokens, scanned in priority order: page mention, html anchor, md link, bare URL.
+const INLINE_PATTERN = new RegExp(
+  [
+    `\\[\\[\\s*(?<mentionId>${NOTION_ID})(?:\\s*\\|[^\\]]*)?\\s*\\]\\]`,
+    `<a\\s+[^>]*href=(?<q>["'])(?<htmlUrl>https?://[^"']+)\\k<q>[^>]*>(?<htmlText>[\\s\\S]*?)</a>`,
+    `\\[(?<mdText>[^\\]]+)\\]\\((?<mdUrl>https?://[^)\\s]+)\\)`,
+    `(?<bareUrl>https?://[^\\s<>)"']+)`,
+  ].join("|"),
+  "gi"
+);
 const ANNOTATION_PATTERN = /(`+)([\s\S]*?)\1|(\*\*|__)([\s\S]+?)\3|(~~)([\s\S]+?)\5|(?<![\w*])([*_])(?=\S)([\s\S]*?\S)\7(?![\w*])/g;
 
 function annotationSegments(text) {
@@ -80,11 +96,16 @@ function richTextFromMarkdown(input) {
   const text = String(input || "");
   const parts = [];
   let cursor = 0;
-  for (const match of text.matchAll(LINK_PATTERN)) {
+  for (const match of text.matchAll(INLINE_PATTERN)) {
     appendInline(parts, decodeHtmlEntities(text.slice(cursor, match.index)));
-    const url = decodeHtmlEntities(match[2] || match[4] || match[5]).replace(/[.,;:]+$/, "");
-    const label = decodeHtmlEntities(match[3] || stripHtml(match[0]) || url);
-    parts.push(linkedTextRichText(label, url));
+    const groups = match.groups || {};
+    if (groups.mentionId) {
+      parts.push(pageMentionRichText(canonicalId(groups.mentionId)));
+    } else {
+      const url = decodeHtmlEntities(groups.htmlUrl || groups.mdUrl || groups.bareUrl).replace(/[.,;:]+$/, "");
+      const label = decodeHtmlEntities(groups.mdText || stripHtml(groups.htmlText || "") || url);
+      parts.push(linkedTextRichText(label, url));
+    }
     cursor = match.index + match[0].length;
   }
   appendInline(parts, decodeHtmlEntities(text.slice(cursor)));
@@ -322,6 +343,9 @@ function markdownFromRichText(richText = []) {
   return (richText || [])
     .map((part) => {
       if (part.type === "equation") return `$${part.equation?.expression || ""}$`;
+      if (part.type === "mention" && part.mention?.type === "page" && part.mention.page?.id) {
+        return `[[${part.mention.page.id}]]`;
+      }
       let text = part.plain_text ?? part.text?.content ?? "";
       if (!text) return "";
       const annotations = part.annotations || {};
