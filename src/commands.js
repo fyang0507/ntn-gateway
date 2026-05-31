@@ -28,7 +28,7 @@ function classifyPage(page) {
   return "commitments";
 }
 
-const DATABASE_TRACKING_REMINDER = "If this creates a new database for future agent work, add its canonical data source ID to the Gateway page so ntn-gateway can track it.";
+const DATABASE_TRACKING_REMINDER = "After creating a database for future agent work, add it to the Gateway page as an inline @mention (type @ and pick the database, not a link-to-page block) so future agents can resolve its name and canonical data source ID via ntn-gateway show.";
 
 class CommandHandlers {
   constructor({ api, gateway, stdin }) {
@@ -55,8 +55,9 @@ class CommandHandlers {
       dry_run: true,
       plan: {
         title,
-        note: "Create the database in Notion, expose its canonical data source ID on the Gateway page, then operate through ntn-gateway.",
+        note: "Create the database in Notion, then add it to the Gateway page so ntn-gateway can operate on it.",
       },
+      reminder: DATABASE_TRACKING_REMINDER,
     };
   }
 

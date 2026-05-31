@@ -10,7 +10,7 @@ Notion is the durable collaboration surface, not merely a place to store text. T
 ## Operating Posture
 
 - Treat the live Notion workspace as source of truth; inspect it before acting when current state matters.
-- Start with `ntn-gateway show`. Database names are annotated inline with canonical data source IDs.
+- Start with `ntn-gateway show`. Each child-database and page link resolves to its own line as `Name: <id>` (databases) or `Name [[page-id]]` (pages), preserving the name<->ID mapping.
 - If working outside the `ntn-gateway` repo, still run `ntn-gateway show` before writes; the CLI should load env from the caller workspace or its package root, and `config_missing` means the runtime install/env is not prepared.
 - Keep the Gateway page high-level: add durable locators or operating notes there only when future agents need them, not as a schema dump.
 - Use official `ntn` or the Notion API only as a comparator or narrow escape hatch after the approved surface is identified.
@@ -26,6 +26,7 @@ Choose the lightest durable action that preserves shared state:
 - For duplicate checks or ad hoc search: use `ntn-gateway show` to find the approved data source, then query that data source with official `ntn datasources query <data-source-id> --filter ...`.
 - Body content is Markdown in both directions: writes parse Markdown into native Notion blocks (headings, lists, to-dos, quotes, fenced code, dividers, nested lists, inline bold/italic/code/links), and `page get` returns the full body as clean Markdown in `content`. Write Markdown normally instead of pre-building Notion block JSON.
 - For source links in page bodies, put the URL on its own paragraph or use `Source: [label](URL)`; the CLI converts source-only links into Notion bookmark blocks instead of plain Markdown or HTML.
+- To make a real, clickable link to another Notion page in body content, write `[[page-id]]` (optionally `[[page-id|Label]]`); it becomes a native page mention rather than inert `[Name]` text, and `page get` round-trips it back to `[[page-id]]`. To relate pages structurally, set a relation property to an array of page IDs (`{"Related": ["<page-id>"]}`); the related data source must be shared with the integration. Never hand-write plain-text `[Name]` placeholders for links.
 - Use `Agent Notes` property only for durable future-agent behavior, such as "skip this for today suggestions because Fred saved it for next month."
 
 ## Page Boundary
@@ -35,7 +36,7 @@ Notion pages are human-visible artifacts. Do not treat them like private scratch
 - Append new information instead of rewriting existing human-authored body content.
 - For intricate corrections, create a replacement or follow-up page and archive/delete the old page only when that workflow is supported and clearly safer.
 - Validate live schema immediately before property-bearing creates or updates.
-- If a write creates a reusable database or durable collaboration surface, add its canonical data source ID back to the Gateway page so future agents can discover it.
+- If a write creates a reusable database or durable collaboration surface, add it to the Gateway page as an inline `@`-mention (not a link-to-page block) so future agents can discover its name and canonical data source ID. `ntn-gateway database create` returns this reminder too.
 
 ## Commands To Reach For
 

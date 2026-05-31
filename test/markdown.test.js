@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { markdownToBlocks, markdownFromBlocks, normalizeLanguage } = require("../src/markdown");
+const { markdownToBlocks, markdownFromBlocks, markdownFromRichText, normalizeLanguage } = require("../src/markdown");
 
 test("markdownToBlocks turns headings and bullets into native Notion blocks", () => {
   const blocks = markdownToBlocks("## Status\n- a\n- b");
@@ -149,6 +149,41 @@ test("a labeled bookmark round-trips its label through Markdown", () => {
   assert.deepEqual(markdownToBlocks(markdown)[0].bookmark.caption, [
     { type: "text", text: { content: "Anthropic News" } },
   ]);
+});
+
+test("markdownToBlocks turns [[page-id]] into an inline page mention", () => {
+  const pageId = "cb43fc31-7a14-4cc2-b1d4-864c169e1a12";
+  const blocks = markdownToBlocks(`See [[${pageId}]] for context.`);
+
+  assert.deepEqual(blocks[0].paragraph.rich_text, [
+    { type: "text", text: { content: "See " } },
+    { type: "mention", mention: { type: "page", page: { id: pageId } } },
+    { type: "text", text: { content: " for context." } },
+  ]);
+});
+
+test("markdownToBlocks canonicalizes a dashless page id and drops an optional label", () => {
+  const blocks = markdownToBlocks("[[cb43fc317a144cc2b1d4864c169e1a12|My Page]]");
+
+  assert.deepEqual(blocks[0].paragraph.rich_text, [
+    { type: "mention", mention: { type: "page", page: { id: "cb43fc31-7a14-4cc2-b1d4-864c169e1a12" } } },
+  ]);
+});
+
+test("markdownFromRichText serializes a page mention back to [[page-id]]", () => {
+  const pageId = "cb43fc31-7a14-4cc2-b1d4-864c169e1a12";
+  const richText = [
+    { type: "text", plain_text: "See " },
+    { type: "mention", plain_text: "My Page", mention: { type: "page", page: { id: pageId } } },
+  ];
+
+  assert.equal(markdownFromRichText(richText), `See [[${pageId}]]`);
+});
+
+test("a page mention round-trips through Markdown", () => {
+  const pageId = "cb43fc31-7a14-4cc2-b1d4-864c169e1a12";
+  const blocks = markdownToBlocks(`[[${pageId}]]`);
+  assert.equal(markdownFromBlocks(blocks), `[[${pageId}]]`);
 });
 
 test("normalizeLanguage maps aliases and falls back to plain text", () => {
