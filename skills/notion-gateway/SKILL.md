@@ -12,7 +12,8 @@ Notion is the durable collaboration surface, not merely a place to store text. T
 - Treat the live Notion workspace as source of truth; inspect it before acting when current state matters.
 - Start with `ntn-gateway show`. Each child-database and page link resolves to its own line as `Name: <id>` (databases) or `Name [[page-id]]` (pages), preserving the name<->ID mapping.
 - If working outside the `ntn-gateway` repo, still run `ntn-gateway show` before writes; the CLI should load env from the caller workspace or its package root, and `config_missing` means the runtime install/env is not prepared.
-- Keep the Gateway page high-level: add durable locators or operating notes there only when future agents need them, not as a schema dump.
+- One canonical home per rule, so the layers do not drift: this skill owns *how* to operate Notion (workflow, SOP, posture, gotchas); the live Gateway page owns *live routing* (database IDs, workspace-specific priorities, per-area notes). Cross-reference; do not duplicate.
+- Keep the Gateway page to live routing, not a schema dump and not an SOP copy. Do not hard-code volatile IDs or priorities into this skill. If the Gateway page restates a rule that belongs here, treat this skill as authoritative and trim the page back to routing.
 - Use official `ntn` or the Notion API only as a comparator or narrow escape hatch after the approved surface is identified.
 
 ## Knowledge And Artifact SOP
