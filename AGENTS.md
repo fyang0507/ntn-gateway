@@ -45,3 +45,12 @@ This is an intentional design boundary, not a missing generic Notion feature set
 - Validate schemas immediately before property-bearing writes.
 - Use dry-run plans for broad, ambiguous, or schema-affecting changes.
 - Preserve the Gateway page as a high-level operating document; do not turn it into an exhaustive schema dump.
+
+## CLI Design Principles
+
+The CLI is the agent interface, so its responses must teach the agent how to use it. Self-documenting output beats out-of-band documentation.
+
+- Be token-efficient by default. Return the smallest payload an agent needs to act; gate full API echoes and full property dumps behind an explicit `--verbose` (alias `--format full`).
+- Carry behavioral guidance in the response, not in the skill doc. When the CLI hides detail or caps output, the response itself must say so and name the flag that reveals more (e.g. a terse `hint` pointing at `--verbose`, or a truncation `note` pointing at `--limit` and the narrowing filters). Do not document these affordances only in `skills/` — an agent reading the live output should never have to guess that an escape hatch exists.
+- Protect the context window on reads. Unbounded fan-out (e.g. cross-database aggregation) must cap results with a sensible default, surface a `truncated` flag, and prefer the most relevant rows (most-recently-edited first) so a truncated sample is still useful.
+- Keep `skills/` for workflow intent and durable gotchas, not for restating per-flag CLI behavior that `--help` and the response payload already convey.
