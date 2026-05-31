@@ -65,19 +65,21 @@ function compactProperty(property) {
   }
 }
 
-function normalizePage(page, bodyPreview = []) {
+function normalizePage(page, body = {}) {
   const properties = {};
   for (const [name, property] of Object.entries(page.properties || {})) {
     properties[name] = { type: property.type, value: compactProperty(property) };
   }
 
+  const { content = null, preview = [] } = body;
   return {
     id: page.id,
     url: page.url,
     parent: page.parent,
     archived: Boolean(page.archived),
     properties,
-    body_preview: bodyPreview,
+    content,
+    body_preview: preview,
     last_edited_time: page.last_edited_time,
   };
 }

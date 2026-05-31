@@ -2,6 +2,15 @@
 
 Date: 2026-05-20
 
+## 2026-05-31 Dual Markdown ↔ Notion-Block Body Content (#1)
+
+- Body content is now a true Markdown ↔ Notion-block boundary in both directions, fixing the prior behavior where `## heading`/`- bullet` were stored as literal paragraph text and reads returned only a truncated `body_preview`.
+- New `src/markdown.js` owns the conversion. Write path (`page create --content`, `block append`) parses Markdown into native Notion blocks: headings (1–3), bulleted/numbered lists, to-dos, quotes, fenced code (with language normalization to Notion's enum), dividers, indentation-nested list children, and inline bold/italic/strikethrough/code/links. Source-only URL paragraphs still become bookmark blocks; raw Notion block JSON still passes through unchanged.
+- Read path (`page get`) recursively fetches the block tree (capped depth) and returns the full body as clean Markdown in a new `content` field; `body_preview` is retained for a quick glance.
+- The inline rich-text/source-link helpers moved from `io.js` into `src/markdown.js`; `io.js` re-exports `parseRichText`/`sourceUrlFromParagraph` for compatibility. This also preserves link labels on the read path, addressing the shared root cause behind #2 for page bodies.
+- Read-path serialization fidelity follow-ups: consecutive numbered list items render with sequential ordinals (`1.`, `2.`, `3.`), resetting per list and per nesting level; and a *labeled* source link (`[Label](URL)` or `Source: [Label](URL)`) is now written as a Notion bookmark with the label stored in the block `caption`, so it still renders as a human-friendly bookmark card and the label survives the Markdown round-trip. Bare source URLs remain caption-less bookmarks.
+- Verified live in the `Life misc.` data source: created a multi-format showcase page (headings, nested lists, numbered list, to-dos, multi-line quote, fenced code, divider, bare + labeled source links, inline bold/italic/strikethrough/code/links), read it back as clean Markdown, confirmed both follow-up fixes, then archived the test pages.
+
 ## 2026-05-25 Input Contract Follow-Up
 
 - `page create` and `block append` now share the same Markdown body input contract: `--content <markdown>`, `--content @file.md`, piped stdin, or explicit `--stdin`.
