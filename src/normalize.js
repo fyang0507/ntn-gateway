@@ -71,7 +71,7 @@ function normalizePage(page, body = {}) {
     properties[name] = { type: property.type, value: compactProperty(property) };
   }
 
-  const { content = null, preview = [] } = body;
+  const { content = null } = body;
   return {
     id: page.id,
     url: page.url,
@@ -79,7 +79,6 @@ function normalizePage(page, body = {}) {
     archived: Boolean(page.archived),
     properties,
     content,
-    body_preview: preview,
     last_edited_time: page.last_edited_time,
   };
 }

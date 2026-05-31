@@ -174,15 +174,18 @@ test("page get rejects pages outside Gateway-approved parents", async () => {
   );
 });
 
-test("page get returns compact properties, full markdown content, and body preview", async () => {
+test("page get returns typed properties and full markdown content", async () => {
   const result = await dispatch(["page", "get", pageId], context());
 
   assert.equal(result.id, pageId);
+  assert.equal(result.url, `https://notion.so/${pageId}`);
   assert.equal(result.properties.Status.value, "In progress");
   assert.equal(result.content, "Body preview");
-  assert.deepEqual(result.body_preview, ["Body preview"]);
   assert.equal(result.properties["Agent Notes"].value, "Saved for next month");
   assert.equal(result.last_edited_time, "2026-05-25T10:00:00.000Z");
+  // Drops the redundant body_preview and the archived flag when the page is not archived.
+  assert.equal(result.body_preview, undefined);
+  assert.equal(result.archived, undefined);
 });
 
 test("page get returns the full body as clean Markdown blocks", async () => {
@@ -362,7 +365,8 @@ test("aggregate pages --verbose returns full normalized pages grouped by status"
 
   const page = result.databases[0].by_status["In progress"][0];
   assert.equal(page.properties.Status.value, "In progress");
-  assert.ok("body_preview" in page);
+  // Full normalized page (not the compact aggregate summary) carries url/parent.
+  assert.equal(page.url, `https://notion.so/${pageId}`);
 });
 
 test("aggregate pages applies a default per-database limit for context protection", async () => {

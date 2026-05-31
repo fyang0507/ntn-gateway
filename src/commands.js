@@ -1,16 +1,12 @@
 const { GatewayError } = require("./errors");
 const { normalizeSchema, normalizePage } = require("./normalize");
 const { buildPageProperties } = require("./properties");
-const { blockPlainText, canonicalId } = require("./text");
+const { canonicalId } = require("./text");
 const { markdownFromBlocks } = require("./markdown");
 const { readJsonArg, readContentInput, blocksFromInput } = require("./io");
 
 const MAX_BLOCK_DEPTH = 4;
 const { buildAggregateQuery, firstPropertyOfType } = require("./query");
-
-function bodyPreviewFromBlocks(blocks, limit = 8) {
-  return blocks.map(blockPlainText).filter(Boolean).slice(0, limit);
-}
 
 function pageStatus(page) {
   for (const property of Object.values(page.properties || {})) {
@@ -84,10 +80,10 @@ class CommandHandlers {
     const page = await this.api.retrievePage(pageId);
     await this.gateway.assertAllowedPage(page);
     const blocks = await this.retrieveBlockTree(pageId);
-    return normalizePage(page, {
-      content: markdownFromBlocks(blocks),
-      preview: bodyPreviewFromBlocks(blocks),
-    });
+    const result = normalizePage(page, { content: markdownFromBlocks(blocks) });
+    // archived:false is the no-op common case; surface the flag only when the page is archived.
+    if (!result.archived) delete result.archived;
+    return result;
   }
 
   async retrieveBlockTree(blockId, depth = 0) {
@@ -239,4 +235,4 @@ class CommandHandlers {
 
 }
 
-module.exports = { CommandHandlers, bodyPreviewFromBlocks };
+module.exports = { CommandHandlers };
