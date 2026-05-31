@@ -22,6 +22,10 @@ Output:
 
 Content:
   --content accepts inline Markdown or @file.md. Piped stdin is read automatically; --stdin explicitly reads stdin.
+  Markdown is parsed into native Notion blocks (headings, bulleted/numbered lists, to-dos, quotes,
+  fenced code, dividers, nested lists) so the page renders correctly for humans. Source-only URLs
+  become bookmark blocks. Raw Notion block JSON (input starting with [ or {) is still passed through.
+  page get returns the full body as clean Markdown in the "content" field.
 `;
 
 module.exports = { HELP };

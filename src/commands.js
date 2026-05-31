@@ -2,7 +2,10 @@ const { GatewayError } = require("./errors");
 const { normalizeSchema, normalizePage } = require("./normalize");
 const { buildPageProperties } = require("./properties");
 const { blockPlainText } = require("./text");
+const { markdownFromBlocks } = require("./markdown");
 const { readJsonArg, readContentInput, blocksFromInput } = require("./io");
+
+const MAX_BLOCK_DEPTH = 4;
 const { buildAggregateQuery, firstPropertyOfType } = require("./query");
 
 function bodyPreviewFromBlocks(blocks, limit = 8) {
@@ -60,8 +63,22 @@ class CommandHandlers {
   async pageGet(pageId) {
     const page = await this.api.retrievePage(pageId);
     await this.gateway.assertAllowedPage(page);
-    const blocks = await this.api.retrieveBlocks(pageId);
-    return normalizePage(page, bodyPreviewFromBlocks(blocks));
+    const blocks = await this.retrieveBlockTree(pageId);
+    return normalizePage(page, {
+      content: markdownFromBlocks(blocks),
+      preview: bodyPreviewFromBlocks(blocks),
+    });
+  }
+
+  async retrieveBlockTree(blockId, depth = 0) {
+    const blocks = await this.api.retrieveBlocks(blockId);
+    if (depth >= MAX_BLOCK_DEPTH) return blocks;
+    for (const block of blocks) {
+      if (block.has_children && block[block.type]) {
+        block[block.type].children = await this.retrieveBlockTree(block.id, depth + 1);
+      }
+    }
+    return blocks;
   }
 
   async pageCreate(dataSourceId, title, propertiesArg, options = {}) {

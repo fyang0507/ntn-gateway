@@ -54,9 +54,23 @@ test("page create dry-run converts source links to bookmark blocks", async () =>
   assert.deepEqual(result.plan.request.children[0], {
     object: "block",
     type: "bookmark",
-    bookmark: { url: sourceUrl },
+    bookmark: { url: sourceUrl, caption: [{ type: "text", text: { content: "Using Claude Code" } }] },
   });
   assert.equal(result.plan.request.children[1].paragraph.rich_text[0].text.content, "Notes");
+});
+
+test("page create dry-run keeps a bare source URL as a caption-less bookmark", async () => {
+  const sourceUrl = "https://claude.com/blog/using-claude-code-the-unreasonable-effectiveness-of-html";
+  const result = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "Ship gateway", "--content", sourceUrl, "--dry-run"],
+    context()
+  );
+
+  assert.deepEqual(result.plan.request.children[0], {
+    object: "block",
+    type: "bookmark",
+    bookmark: { url: sourceUrl },
+  });
 });
 
 test("page create dry-run converts inline markdown links to rich text links", async () => {
@@ -127,12 +141,41 @@ test("page get rejects pages outside Gateway-approved parents", async () => {
   );
 });
 
-test("page get returns compact properties and body preview", async () => {
+test("page get returns compact properties, full markdown content, and body preview", async () => {
   const result = await dispatch(["page", "get", pageId], context());
 
   assert.equal(result.id, pageId);
   assert.equal(result.properties.Status.value, "In progress");
+  assert.equal(result.content, "Body preview");
   assert.deepEqual(result.body_preview, ["Body preview"]);
+});
+
+test("page get returns the full body as clean Markdown blocks", async () => {
+  const result = await dispatch(
+    ["page", "get", pageId],
+    context({
+      pageBlocks: [
+        { type: "heading_2", heading_2: { rich_text: [{ plain_text: "Status" }] } },
+        { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "a" }] } },
+        { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "b" }] } },
+      ],
+    })
+  );
+
+  assert.equal(result.content, "## Status\n\n- a\n- b");
+});
+
+test("block append converts markdown headings and bullets into native blocks", async () => {
+  const result = await dispatch(
+    ["block", "append", pageId, "--content", "## Status\n- a\n- b", "--dry-run"],
+    context()
+  );
+
+  assert.deepEqual(
+    result.request.children.map((block) => block.type),
+    ["heading_2", "bulleted_list_item", "bulleted_list_item"]
+  );
+  assert.equal(result.request.children[0].heading_2.rich_text[0].text.content, "Status");
 });
 
 test("page properties update dry-run validates and returns a change plan", async () => {
@@ -324,7 +367,7 @@ function mockClient(options = {}) {
           }
           return {
             has_more: false,
-            results: [{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "Body preview" }] } }],
+            results: options.pageBlocks || [{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "Body preview" }] } }],
           };
         },
         append: async ({ children }) => ({ results: children }),
