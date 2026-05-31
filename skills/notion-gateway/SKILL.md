@@ -23,7 +23,7 @@ Choose the lightest durable action that preserves shared state:
 - For changed state: update database properties such as status, dates, assignees, tags, priority, or source links.
 - For new evidence, logs, summaries, handoffs, or results: append body blocks to the relevant page.
 - For broad, ambiguous, or schema-affecting changes: produce a dry-run plan before writing.
-- For duplicate checks or ad hoc search: use `ntn-gateway show` to find the approved data source, then query that data source with official `ntn datasources query <data-source-id> --filter ...`.
+- To read the rows of a single database (the common "show me what's in X" first action), duplicate-check, or ad hoc search: use `ntn-gateway show` to find the approved data source, then run official `ntn datasources query <data-source-id>` (add `--filter ...`, `--sort ...`, `--limit ...`, `--plain`/`--json` as needed). This requires a logged-in `ntn` (run `ntn login`, or set `NOTION_WORKSPACE_ID`); without it the query fails with `No workspace selected`.
 - Body content is Markdown in both directions: writes parse Markdown into native Notion blocks (headings, lists, to-dos, quotes, fenced code, dividers, nested lists, inline bold/italic/code/links), and `page get` returns the full body as clean Markdown in `content`. Write Markdown normally instead of pre-building Notion block JSON.
 - For source links in page bodies, put the URL on its own paragraph or use `Source: [label](URL)`; the CLI converts source-only links into Notion bookmark blocks instead of plain Markdown or HTML.
 - To make a real, clickable link to another Notion page in body content, write `[[page-id]]` (optionally `[[page-id|Label]]`); it becomes a native page mention rather than inert `[Name]` text, and `page get` round-trips it back to `[[page-id]]`. To relate pages structurally, set a relation property to an array of page IDs (`{"Related": ["<page-id>"]}`); the related data source must be shared with the integration. Never hand-write plain-text `[Name]` placeholders for links.
@@ -46,7 +46,8 @@ Notion pages are human-visible artifacts. Do not treat them like private scratch
 - Create page: `ntn-gateway page create --database <data-source-id> --title "..." [--properties @props.json] [--content <markdown>|stdin|--stdin]`
 - Update properties: `ntn-gateway page properties update <page-id> --properties @props.json [--dry-run]`
 - Append body: `ntn-gateway block append <page-id> (--content <markdown>|stdin|--stdin) [--dry-run]`
-- Roll up work: `ntn-gateway aggregate pages --status "Not started,In progress" [--since YYYY-MM-DD] [--until YYYY-MM-DD]`
+- Roll up work across Gateway databases: `ntn-gateway aggregate pages --status "Not started,In progress" [--since YYYY-MM-DD] [--until YYYY-MM-DD]`
+- Read rows of one database: `ntn datasources query <data-source-id> [--filter ...] [--sort ...] [--limit N] [--plain|--json]` (needs `ntn login`)
 
 Property JSON is a simple object keyed by live property names; the CLI coerces common scalar, date, and array values:
 
@@ -57,7 +58,7 @@ Property JSON is a simple object keyed by live property names; the CLI coerces c
 ## Gotchas
 
 - Generic Notion connectors are too broad for this workspace. Use them only after this SOP establishes the approved surface and canonical IDs.
-- `ntn-gateway` has no `page search` command by design; ad hoc filtering belongs to official data-source query tooling.
+- `ntn-gateway` has no `page search` or single-database `rows` command by design; reading/filtering one database belongs to official `ntn datasources query`. That command needs `ntn` logged in (`ntn login`, or `NOTION_WORKSPACE_ID` / `NOTION_API_TOKEN`); a bare token without a selected workspace yields `No workspace selected`. Confirm with `ntn doctor`.
 - `ntn pages create` is Markdown-first and should not be used for rows that need database properties initialized.
 - `page properties update` changes database properties only. Use `block append` for body changes.
 - Local tests must stay mocked; do not make test runs mutate the live Notion workspace.
