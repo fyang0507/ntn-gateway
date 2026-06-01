@@ -598,6 +598,143 @@ test("aggregate pages skips databases with no matching requested status options"
   assert.equal(result.databases[0].by_status, undefined);
 });
 
+test("aggregate pages --date-filter builds property and timestamp clauses", async () => {
+  let filter;
+  await dispatch(
+    [
+      "aggregate",
+      "pages",
+      "--all",
+      "--date-filter",
+      JSON.stringify({
+        start: { after: "2026-01-01" },
+        end: { before: "2026-06-30" },
+        edited: { after: "2026-05-01" },
+        created: { before: "2026-05-31" },
+      }),
+    ],
+    context({ onQuery: (args) => { filter = args.filter; } })
+  );
+
+  // --all drops the status filter, so the date clauses stand alone, AND-combined in field order.
+  assert.deepEqual(filter, {
+    and: [
+      { property: "Start Date", date: { on_or_after: "2026-01-01" } },
+      { property: "End Date", date: { on_or_before: "2026-06-30" } },
+      { timestamp: "last_edited_time", last_edited_time: { on_or_after: "2026-05-01" } },
+      { timestamp: "created_time", created_time: { on_or_before: "2026-05-31" } },
+    ],
+  });
+});
+
+test("aggregate pages --date-filter AND-combines with the status filter", async () => {
+  let filter;
+  await dispatch(
+    ["aggregate", "pages", "--date-filter", JSON.stringify({ start: { after: "2026-01-01" } })],
+    context({ onQuery: (args) => { filter = args.filter; } })
+  );
+
+  const serialized = JSON.stringify(filter);
+  assert.match(serialized, /"Start Date"/);
+  assert.match(serialized, /on_or_after/);
+  // The default active-status filter is still present alongside the date clause.
+  assert.match(serialized, /In progress/);
+});
+
+test("aggregate pages echoes the parsed date_filter in filters", async () => {
+  const result = await dispatch(
+    ["aggregate", "pages", "--all", "--date-filter", JSON.stringify({ end: { before: "2026-06-30" } })],
+    context()
+  );
+
+  assert.deepEqual(result.filters.date_filter, { end: { before: "2026-06-30" } });
+});
+
+test("aggregate pages rejects an unknown date-filter field", async () => {
+  await assert.rejects(
+    dispatch(["aggregate", "pages", "--date-filter", JSON.stringify({ due: { after: "2026-01-01" } })], context()),
+    /Unknown date field "due"/
+  );
+});
+
+test("aggregate pages rejects a malformed date-filter bound value", async () => {
+  await assert.rejects(
+    dispatch(["aggregate", "pages", "--date-filter", JSON.stringify({ start: { after: "2026/01/01" } })], context()),
+    /YYYY-MM-DD/
+  );
+});
+
+test("aggregate pages rejects an invalid date-filter bound name", async () => {
+  await assert.rejects(
+    dispatch(["aggregate", "pages", "--date-filter", JSON.stringify({ start: { on: "2026-01-01" } })], context()),
+    /valid bound/
+  );
+});
+
+test("aggregate pages rejects a non-object date-filter", async () => {
+  await assert.rejects(
+    dispatch(["aggregate", "pages", "--date-filter", JSON.stringify(["start"])], context()),
+    /must be a JSON object/
+  );
+});
+
+test("aggregate pages rejects --date-filter without a value", async () => {
+  await assert.rejects(
+    dispatch(["aggregate", "pages", "--date-filter"], context()),
+    /--date-filter requires a JSON object/
+  );
+});
+
+test("aggregate pages excludes the Connections database from the default sweep", async () => {
+  const connectionsId = "88888888-8888-8888-8888-888888888888";
+  const queriedDataSourceIds = [];
+  const result = await dispatch(
+    ["aggregate", "pages", "--all"],
+    context({
+      blocks: [...gatewayBlocks(), gatewayTableRow("Connections", connectionsId)],
+      dataSourceTitles: { [connectionsId]: "Connections" },
+      queriedDataSourceIds,
+    })
+  );
+
+  assert.deepEqual(result.databases.map((entry) => entry.id), [dataSourceId]);
+  assert.deepEqual(queriedDataSourceIds, [dataSourceId]);
+  assert.deepEqual(result.skipped, [{ id: connectionsId, title: "Connections", reason: "non_ticketing_db" }]);
+});
+
+test("aggregate pages includes Connections when it is named explicitly in --databases", async () => {
+  const connectionsId = "88888888-8888-8888-8888-888888888888";
+  const result = await dispatch(
+    ["aggregate", "pages", "--all", "--databases", "Connections"],
+    context({
+      blocks: [...gatewayBlocks(), gatewayTableRow("Connections", connectionsId)],
+      dataSourceTitles: { [connectionsId]: "Connections" },
+    })
+  );
+
+  assert.deepEqual(result.databases.map((entry) => entry.id), [connectionsId]);
+  assert.equal(result.skipped, undefined);
+});
+
+test("aggregate pages surfaces a per-database query error without aborting the sweep", async () => {
+  const result = await dispatch(
+    ["aggregate", "pages", "--all"],
+    context({
+      blocks: [...gatewayBlocks(), gatewayTableRow("Reference", secondDataSourceId)],
+      onQuery: (args) => {
+        if (args.data_source_id === secondDataSourceId) {
+          throw new Error("Could not find property with name or id: Start Date");
+        }
+      },
+    })
+  );
+
+  assert.equal(result.databases[0].id, dataSourceId);
+  assert.ok(result.databases[0].by_status);
+  assert.equal(result.databases[1].id, secondDataSourceId);
+  assert.match(result.databases[1].error, /Could not find property/);
+});
+
 test("workflow presets are not part of the CLI surface", async () => {
   await assert.rejects(
     dispatch(["workflow", "run", "morning-brief", "--date", "today"], context()),
@@ -736,7 +873,7 @@ function mockClient(options = {}) {
     dataSources: {
       retrieve: async ({ data_source_id }) => {
         if (options.onDataSourceRetrieve) await options.onDataSourceRetrieve(data_source_id);
-        return dataSource(data_source_id);
+        return dataSource(data_source_id, (options.dataSourceTitles || {})[data_source_id]);
       },
       query: async (args) => {
         if (options.queriedDataSourceIds) options.queriedDataSourceIds.push(args.data_source_id);
@@ -796,11 +933,11 @@ function gatewayTableRow(title, id) {
   };
 }
 
-function dataSource(id) {
+function dataSource(id, title = "Technical Projects") {
   return {
     id,
     object: "data_source",
-    title: [{ plain_text: "Technical Projects" }],
+    title: [{ plain_text: title }],
     properties: {
       Name: { id: "title", type: "title", title: {} },
       Status: {
@@ -813,7 +950,8 @@ function dataSource(id) {
         type: "multi_select",
         multi_select: { options: [{ name: "Agent" }] },
       },
-      Due: { id: "due", type: "date", date: {} },
+      "Start Date": { id: "start", type: "date", date: {} },
+      "End Date": { id: "end", type: "date", date: {} },
     },
   };
 }

@@ -7,7 +7,12 @@ const { readJsonArg, readContentInput, blocksFromInput } = require("./io");
 const { lineDiff } = require("./diff");
 
 const MAX_BLOCK_DEPTH = 4;
-const { buildAggregateQuery, firstPropertyOfType } = require("./query");
+const { buildAggregateQuery, firstPropertyOfType, validateDateFilter } = require("./query");
+
+// Databases that are not status/date ticketed projects and so do not belong in the
+// cross-database roll-up. Matched case-insensitively by Gateway title. Excluded only from
+// the default sweep; an explicit --databases naming one is still honored.
+const NON_TICKETING_TITLES = new Set(["connections"]);
 
 function pageStatus(page) {
   for (const property of Object.values(page.properties || {})) {
@@ -328,39 +333,63 @@ class CommandHandlers {
   }
 
   async aggregatePages(options) {
-    const registry = this.selectDatabases(await this.gateway.registry(), options.databases);
+    const dateFilter = options.dateFilter ? readJsonArg(options.dateFilter) : undefined;
+    validateDateFilter(dateFilter);
+
+    const fullRegistry = await this.gateway.registry();
+    // Explicit --databases is honored verbatim (including a non-ticketing DB the agent asked
+    // for on purpose); the default sweep drops non-ticketing DBs like Connections and reports
+    // them under "skipped" so the omission is visible.
+    let registry;
+    let excluded = [];
+    if (options.databases) {
+      registry = this.selectDatabases(fullRegistry, options.databases);
+    } else {
+      registry = fullRegistry.filter((entry) => !NON_TICKETING_TITLES.has(entry.title.trim().toLowerCase()));
+      excluded = fullRegistry.filter((entry) => NON_TICKETING_TITLES.has(entry.title.trim().toLowerCase()));
+    }
+
     const limit = options.limit ?? DEFAULT_AGGREGATE_LIMIT;
     const databases = [];
     let truncatedAny = false;
 
     for (const entry of registry) {
-      const schema = normalizeSchema(await this.api.retrieveDataSource(entry.id));
-      const query = buildAggregateQuery(schema, options);
-      if (query.__skip) {
-        databases.push({ id: entry.id, title: entry.title, result_count: 0, skipped: "no_matching_status_options" });
-        continue;
-      }
-      const { results, truncated } = await this.api.queryDataSource(entry.id, query, { limit });
-      if (truncated) truncatedAny = true;
+      try {
+        const schema = normalizeSchema(await this.api.retrieveDataSource(entry.id));
+        const query = buildAggregateQuery(schema, { ...options, dateFilter });
+        if (query.__skip) {
+          databases.push({ id: entry.id, title: entry.title, result_count: 0, skipped: "no_matching_status_options" });
+          continue;
+        }
+        const { results, truncated } = await this.api.queryDataSource(entry.id, query, { limit });
+        if (truncated) truncatedAny = true;
 
-      // Group rows by database (named once), then by their live Notion status value.
-      const byStatus = {};
-      for (const page of results) {
-        const normalized = normalizePage(page);
-        const view = options.verbose ? normalized : compactPageSummary(page, normalized);
-        const status = pageStatus(page) || "No status";
-        (byStatus[status] ||= []).push(view);
-      }
+        // Group rows by database (named once), then by their live Notion status value.
+        const byStatus = {};
+        for (const page of results) {
+          const normalized = normalizePage(page);
+          const view = options.verbose ? normalized : compactPageSummary(page, normalized);
+          const status = pageStatus(page) || "No status";
+          (byStatus[status] ||= []).push(view);
+        }
 
-      const dbEntry = { id: entry.id, title: entry.title, result_count: results.length, truncated };
-      if (Object.keys(byStatus).length > 0) dbEntry.by_status = byStatus;
-      databases.push(dbEntry);
+        const dbEntry = { id: entry.id, title: entry.title, result_count: results.length, truncated };
+        if (Object.keys(byStatus).length > 0) dbEntry.by_status = byStatus;
+        databases.push(dbEntry);
+      } catch (error) {
+        // A per-DB failure (most often a --date-filter that references a property this DB lacks)
+        // is surfaced on its own entry so the rest of the sweep still returns.
+        databases.push({ id: entry.id, title: entry.title, error: error.message });
+      }
     }
 
-    const result = { filters: options, limit, databases };
+    const result = { filters: { status: options.status, all_status: Boolean(options.allStatus), date_filter: dateFilter, databases: options.databases }, limit, databases };
+    if (excluded.length > 0) {
+      result.skipped = excluded.map((entry) => ({ id: entry.id, title: entry.title, reason: "non_ticketing_db" }));
+    }
     if (truncatedAny) {
       result.truncated = true;
-      result.note = `Results capped at ${limit} per database (most-recently-edited first). Narrow with --status/--since/--until or raise --limit to see more.`;
+      result.note = `Results capped at ${limit} per database (most-recently-edited first). Narrow with --status/--date-filter or raise --limit to see more.`;
     }
     if (!options.status && !options.allStatus) {
       result.status_hint = 'Completed work is hidden by default. Pass --all for every status, or --status "Done" for just completed tasks.';

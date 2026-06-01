@@ -99,11 +99,13 @@ async function dispatch(args, context, options = {}) {
         throw new GatewayError("argument_invalid", "--limit must be a positive integer.");
       }
     }
+    if (flags.date_filter === true) {
+      throw new GatewayError("argument_invalid", '--date-filter requires a JSON object (inline or @file.json), e.g. \'{"start":{"after":"2026-01-01"}}\'. Run --help for the field list.');
+    }
     return handlers.aggregatePages({
       status: flags.status,
       allStatus: Boolean(flags.all),
-      since: flags.since,
-      until: flags.until,
+      dateFilter: typeof flags.date_filter === "string" ? flags.date_filter : undefined,
       databases: typeof flags.databases === "string" ? flags.databases : undefined,
       limit,
       verbose,

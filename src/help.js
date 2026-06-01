@@ -11,7 +11,7 @@ Usage:
   ntn-gateway page properties update <page-id> --properties @props.json [--dry-run]
   ntn-gateway block append <page-id> (--content <markdown>|stdin|--stdin) [--dry-run]
   ntn-gateway page body replace <page-id> (--content <markdown>|stdin|--stdin) [--dry-run] [--confirm]
-  ntn-gateway aggregate pages [--databases <id|title,...>] [--status "..."] [--all] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--limit N]
+  ntn-gateway aggregate pages [--databases <id|title,...>] [--status "..."] [--all] [--date-filter '<json>'] [--limit N]
 
 Global flags:
   --format json|human   Output format (default json). json is compact (single line) to save
@@ -44,7 +44,22 @@ Output:
   statuses) and returns a "status_hint"; pass --all for every status, or --status "Done"
   for just completed tasks. It caps results at 10 per database by default (most-recently-
   edited first) to protect the context window and adds a top-level "note" when rows were
-  dropped. Narrow with --status/--since/--until or raise the cap with --limit N.
+  dropped. Narrow with --status/--date-filter or raise the cap with --limit N.
+  The Connections database (people/relationship tracker, not a ticketed project) is excluded
+  from the default sweep and listed under a top-level "skipped"; name it explicitly in
+  --databases to include it.
+
+Date filtering:
+  --date-filter takes a JSON object (inline or @file.json) keyed by date field; each field
+  carries optional "after"/"before" YYYY-MM-DD bounds. All bounds are AND-combined with each
+  other and the status filter. "after" -> on_or_after, "before" -> on_or_before.
+    {"start":{"after":"2026-01-01","before":"2026-06-30"},"end":{"before":"2026-12-31"},
+     "created":{"after":"2026-05-01"},"edited":{"after":"2026-05-01","before":"2026-05-31"}}
+  Fields: start -> "Start Date" property, end -> "End Date" property, created -> created_time
+  (built-in), edited -> last_edited_time (built-in). created/edited work on every database;
+  start/end require those properties to exist. There is no pre-query schema guard: if a named
+  database lacks "Start Date"/"End Date", Notion's validation error is surfaced on that
+  database's entry as an "error" field and the rest of the sweep still returns.
 
 Content:
   --content accepts inline Markdown or @file.md. Piped stdin is read automatically; --stdin explicitly reads stdin.
