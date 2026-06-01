@@ -49,7 +49,7 @@ Notion pages are human-visible artifacts. Do not treat them like private scratch
 - Update properties: `ntn-gateway page properties update <page-id> --properties @props.json [--dry-run]`
 - Append body: `ntn-gateway block append <page-id> (--content <markdown>|stdin|--stdin) [--dry-run]`
 - Replace body (mid-page edit/reorder): `ntn-gateway page body replace <page-id> (--content <markdown>|stdin|--stdin) [--dry-run] [--confirm]`
-- Roll up work across Gateway databases: `ntn-gateway aggregate pages --status "Not started,In progress" [--since YYYY-MM-DD] [--until YYYY-MM-DD]`
+- Roll up work across Gateway databases: `ntn-gateway aggregate pages --status "Not started,In progress" [--date-filter '{"start|end|created|edited":{"after":"YYYY-MM-DD","before":"YYYY-MM-DD"}}']` (run `--help` for field semantics)
 - Read rows of one database: `ntn datasources query <data-source-id> [--filter ...] [--sort ...] [--limit N] [--plain|--json]` (needs `ntn login`)
 
 Property JSON is a simple object keyed by live property names; the CLI coerces common scalar, date, and array values:

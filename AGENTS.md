@@ -55,3 +55,12 @@ The CLI is the agent interface, so its responses must teach the agent how to use
 - Carry behavioral guidance in the response, not in the skill doc. When the CLI hides detail or caps output, the response itself must say so and name the flag that reveals more (e.g. a terse `hint` pointing at `--verbose`, or a truncation `note` pointing at `--limit` and the narrowing filters). Do not document these affordances only in `skills/` — an agent reading the live output should never have to guess that an escape hatch exists.
 - Protect the context window on reads. Unbounded fan-out (e.g. cross-database aggregation) must cap results with a sensible default, surface a `truncated` flag, and prefer the most relevant rows (most-recently-edited first) so a truncated sample is still useful.
 - Keep `skills/` for workflow intent and durable gotchas, not for restating per-flag CLI behavior that `--help` and the response payload already convey.
+
+## SKILL vs Gateway Page Boundary
+
+These two surfaces document different things; keep them disjoint so neither goes stale by tracking the other's churn.
+
+- `skills/` (SKILL.md) owns **general SOP and CLI usage** — how to operate: the workflow, the commands to reach for, and durable gotchas. This layer changes with the tool.
+- The Gateway page owns **Notion/database-specific live context** — which databases exist, their conventions, per-area routing notes, and per-DB facts (e.g. that Connections is a people tracker excluded from work roll-ups). This layer changes with the workspace.
+- Do **not** put CLI usage — command names, flags, JSON argument shapes — into the Gateway page. The CLI evolves independently and the page is a human-readable workspace document, not a tool manual; embedding flags there guarantees drift. State the Notion/db fact (the "what" and "why") and let the agent discover the "how" from `--help`, the skill, and self-documenting CLI responses.
+- Keep the Gateway page **extremely concise** — like this CLAUDE.md/AGENTS.md, it is the highest level of context and is loaded in full by `ntn-gateway show` on every workspace operation, so its token cost is paid constantly. Record only non-obvious, durable context and gotchas. Omit anything self-explanatory or that `ntn-gateway database schema` already reports (property names, types, options). When you add a per-DB note, prune the same paragraph of redundancy in the same pass.
