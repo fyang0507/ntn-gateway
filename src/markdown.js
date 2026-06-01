@@ -32,6 +32,10 @@ function pageMentionRichText(id) {
   return { type: "mention", mention: { type: "page", page: { id } } };
 }
 
+function databaseMentionRichText(id) {
+  return { type: "mention", mention: { type: "database", database: { id } } };
+}
+
 // ---------------------------------------------------------------------------
 // Markdown -> Notion rich text (inline)
 // ---------------------------------------------------------------------------
@@ -39,10 +43,11 @@ function pageMentionRichText(id) {
 // A 32-hex Notion id, with or without dashes (used for [[page-id]] mentions).
 const NOTION_ID = "[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}";
 
-// Inline tokens, scanned in priority order: page mention, html anchor, md link, bare URL.
+// Inline tokens, scanned in priority order: page/database mention, html anchor, md link, bare URL.
+// `[[id]]` is a page mention; `[[db:id]]` is a database mention (the Gateway registry form).
 const INLINE_PATTERN = new RegExp(
   [
-    `\\[\\[\\s*(?<mentionId>${NOTION_ID})(?:\\s*\\|[^\\]]*)?\\s*\\]\\]`,
+    `\\[\\[\\s*(?<mentionKind>db:)?\\s*(?<mentionId>${NOTION_ID})(?:\\s*\\|[^\\]]*)?\\s*\\]\\]`,
     `<a\\s+[^>]*href=(?<q>["'])(?<htmlUrl>https?://[^"']+)\\k<q>[^>]*>(?<htmlText>[\\s\\S]*?)</a>`,
     `\\[(?<mdText>[^\\]]+)\\]\\((?<mdUrl>https?://[^)\\s]+)\\)`,
     `(?<bareUrl>https?://[^\\s<>)"']+)`,
@@ -100,7 +105,8 @@ function richTextFromMarkdown(input) {
     appendInline(parts, decodeHtmlEntities(text.slice(cursor, match.index)));
     const groups = match.groups || {};
     if (groups.mentionId) {
-      parts.push(pageMentionRichText(canonicalId(groups.mentionId)));
+      const id = canonicalId(groups.mentionId);
+      parts.push(groups.mentionKind ? databaseMentionRichText(id) : pageMentionRichText(id));
     } else {
       const url = decodeHtmlEntities(groups.htmlUrl || groups.mdUrl || groups.bareUrl).replace(/[.,;:]+$/, "");
       const label = decodeHtmlEntities(groups.mdText || stripHtml(groups.htmlText || "") || url);
@@ -345,6 +351,9 @@ function markdownFromRichText(richText = []) {
       if (part.type === "equation") return `$${part.equation?.expression || ""}$`;
       if (part.type === "mention" && part.mention?.type === "page" && part.mention.page?.id) {
         return `[[${part.mention.page.id}]]`;
+      }
+      if (part.type === "mention" && part.mention?.type === "database" && part.mention.database?.id) {
+        return `[[db:${part.mention.database.id}]]`;
       }
       let text = part.plain_text ?? part.text?.content ?? "";
       if (!text) return "";
