@@ -186,6 +186,32 @@ test("a page mention round-trips through Markdown", () => {
   assert.equal(markdownFromBlocks(blocks), `[[${pageId}]]`);
 });
 
+test("markdownToBlocks turns [[db:id]] into an inline database mention", () => {
+  const dbId = "3619782c-4f4a-8027-b3bf-d0323e141d62";
+  const blocks = markdownToBlocks(`See [[db:${dbId}]] for tasks.`);
+
+  assert.deepEqual(blocks[0].paragraph.rich_text, [
+    { type: "text", text: { content: "See " } },
+    { type: "mention", mention: { type: "database", database: { id: dbId } } },
+    { type: "text", text: { content: " for tasks." } },
+  ]);
+});
+
+test("markdownFromRichText serializes a database mention back to [[db:id]]", () => {
+  const dbId = "3619782c-4f4a-8027-b3bf-d0323e141d62";
+  const richText = [
+    { type: "mention", plain_text: "Technical Reading", mention: { type: "database", database: { id: dbId } } },
+  ];
+
+  assert.equal(markdownFromRichText(richText), `[[db:${dbId}]]`);
+});
+
+test("a database mention round-trips through Markdown (Gateway registry stays intact)", () => {
+  const dbId = "3619782c-4f4a-8027-b3bf-d0323e141d62";
+  const blocks = markdownToBlocks(`[[db:${dbId}]]`);
+  assert.equal(markdownFromBlocks(blocks), `[[db:${dbId}]]`);
+});
+
 test("normalizeLanguage maps aliases and falls back to plain text", () => {
   assert.equal(normalizeLanguage("ts"), "typescript");
   assert.equal(normalizeLanguage("sh"), "shell");

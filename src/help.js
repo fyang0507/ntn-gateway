@@ -55,15 +55,17 @@ Content:
   page body replace rewrites the whole body: it clears the existing top-level blocks and
   recreates them from the supplied Markdown (use it for mid-page edits/reordering that append
   cannot do). Use --dry-run to preview a line diff plus removed/new block counts and any
-  warnings; the destructive apply requires --confirm. It cannot recreate database, child-page,
-  table, column, or media (image/video/file/pdf/embed) blocks; dry-run lists those as warnings,
-  so do not wholesale-replace a body that holds a child_database registry (e.g. the Gateway
-  page) — append instead.
+  warnings; the destructive apply requires --confirm. Inline page and database mentions are
+  preserved (they round-trip as [[id]] / [[db:id]]), so the Gateway registry survives a replace.
+  It still cannot recreate standalone database, child-page, table, column, or media
+  (image/video/file/pdf/embed) blocks, nor other inline mention types (user/date/link_preview);
+  dry-run lists each of those as a warning so nothing is dropped silently.
 
 Links:
   Write a real, clickable page link with [[page-id]] in Markdown body content; it becomes a native
   Notion page mention (optional label: [[page-id|Label]], the label is dropped since Notion renders
-  the live title). page get serializes page mentions back to [[page-id]] so links round-trip.
+  the live title). A database mention uses [[db:database-id]] (the Gateway registry form). page get
+  serializes page and database mentions back to [[id]] / [[db:id]] so links round-trip.
   To relate pages through a relation property, pass an array of page IDs for that property, e.g.
   --properties '{"Related": ["<page-id>", "<page-id>"]}' (the related data source must be shared with
   the integration). show resolves each child-database and page link to "Name: <id>" / "Name [[id]]"

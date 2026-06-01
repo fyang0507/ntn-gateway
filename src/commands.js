@@ -67,6 +67,11 @@ const NON_RECONSTRUCTABLE_BLOCK_TYPES = new Set([
   "unsupported",
 ]);
 
+// Inline mention types a Markdown round-trip can faithfully recreate ([[id]] / [[db:id]]).
+// Any other mention (user, date, link_preview, template, ...) only round-trips as plain text,
+// so replacing a body that holds one would silently drop the live mention.
+const ROUND_TRIPPABLE_MENTION_TYPES = new Set(["page", "database"]);
+
 // Flatten a retrieveBlockTree result (children live at block[block.type].children) so the
 // destroyed-block count and warnings scan see nested blocks, not just the top level.
 function flattenBlocks(blocks = []) {
@@ -77,6 +82,25 @@ function flattenBlocks(blocks = []) {
     if (Array.isArray(children)) flat.push(...flattenBlocks(children));
   }
   return flat;
+}
+
+// Scan flattened blocks' rich text for inline mentions Markdown cannot represent. These hide
+// inside paragraph/heading/list rich_text (not a distinct block type), so the block-type scan
+// above never catches them — they must be detected separately or they vanish without warning.
+function lossyInlineMentions(flatBlocks = []) {
+  const types = new Set();
+  let count = 0;
+  for (const block of flatBlocks) {
+    const richText = block[block.type]?.rich_text;
+    if (!Array.isArray(richText)) continue;
+    for (const run of richText) {
+      if (run.type === "mention" && !ROUND_TRIPPABLE_MENTION_TYPES.has(run.mention?.type)) {
+        types.add(run.mention?.type || "unknown");
+        count += 1;
+      }
+    }
+  }
+  return { count, types: [...types] };
 }
 
 class CommandHandlers {
@@ -242,7 +266,14 @@ class CommandHandlers {
     if (lostTypes.length) {
       const distinctTypes = [...new Set(lostTypes.map((block) => block.type))].join(", ");
       warnings.push(
-        `This replace will permanently delete ${lostTypes.length} block(s) Markdown cannot recreate (${distinctTypes}); they will be lost. The Gateway registry lives in child_database/mention blocks — do not replace the Gateway page body wholesale if it holds the registry.`
+        `This replace will permanently delete ${lostTypes.length} block(s) Markdown cannot recreate (${distinctTypes}); they will be lost. If the Gateway registry lives in standalone child_database blocks, do not replace the Gateway page body wholesale.`
+      );
+    }
+    // Page and database mentions survive as [[id]]/[[db:id]]; any other inline mention does not.
+    const lostMentions = lossyInlineMentions(flattened);
+    if (lostMentions.count) {
+      warnings.push(
+        `This replace will downgrade ${lostMentions.count} inline mention(s) Markdown cannot represent (${lostMentions.types.join(", ")}) to plain text. Page and database mentions are preserved as [[id]]/[[db:id]].`
       );
     }
 
