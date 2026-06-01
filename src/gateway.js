@@ -353,6 +353,11 @@ class GatewayService {
   }
 
   async assertAllowedPage(page) {
+    // The Gateway page itself has a workspace parent (no data source), but agents are told
+    // to operate on it directly, so allow it by id match instead of failing scope.
+    if (compactId(page.id) === compactId(this.config.gatewayPageId)) {
+      return { id: page.id, title: "Gateway page", gateway: true };
+    }
     const parentId = page.parent?.data_source_id || page.parent?.database_id;
     if (!parentId) {
       throw new GatewayError("gateway_scope_rejected", "The page does not belong to a data source exposed by the Gateway registry.", {

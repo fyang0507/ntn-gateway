@@ -10,6 +10,7 @@ Usage:
   ntn-gateway page create --database <data-source-id> --title "..." [--properties @props.json] [--content <markdown>|stdin|--stdin] [--dry-run]
   ntn-gateway page properties update <page-id> --properties @props.json [--dry-run]
   ntn-gateway block append <page-id> (--content <markdown>|stdin|--stdin) [--dry-run]
+  ntn-gateway page body replace <page-id> (--content <markdown>|stdin|--stdin) [--dry-run] [--confirm]
   ntn-gateway aggregate pages [--databases <id|title,...>] [--status "..."] [--all] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--limit N]
 
 Global flags:
@@ -51,6 +52,13 @@ Content:
   fenced code, dividers, nested lists) so the page renders correctly for humans. Source-only URLs
   become bookmark blocks. Raw Notion block JSON (input starting with [ or {) is still passed through.
   page get returns the full body as clean Markdown in the "content" field.
+  page body replace rewrites the whole body: it clears the existing top-level blocks and
+  recreates them from the supplied Markdown (use it for mid-page edits/reordering that append
+  cannot do). Use --dry-run to preview a line diff plus removed/new block counts and any
+  warnings; the destructive apply requires --confirm. It cannot recreate database, child-page,
+  table, column, or media (image/video/file/pdf/embed) blocks; dry-run lists those as warnings,
+  so do not wholesale-replace a body that holds a child_database registry (e.g. the Gateway
+  page) — append instead.
 
 Links:
   Write a real, clickable page link with [[page-id]] in Markdown body content; it becomes a native

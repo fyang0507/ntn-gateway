@@ -4,6 +4,7 @@ const { buildPageProperties } = require("./properties");
 const { canonicalId } = require("./text");
 const { markdownFromBlocks } = require("./markdown");
 const { readJsonArg, readContentInput, blocksFromInput } = require("./io");
+const { lineDiff } = require("./diff");
 
 const MAX_BLOCK_DEPTH = 4;
 const { buildAggregateQuery, firstPropertyOfType } = require("./query");
@@ -44,6 +45,39 @@ const DATABASE_TRACKING_REMINDER = "After creating a database for future agent w
 const VERBOSE_HINT = "Terse view. Re-run with --verbose (or --format full) for the full Notion API request/response and full page properties.";
 
 const DEFAULT_AGGREGATE_LIMIT = 10;
+
+// Block types a Markdown round-trip cannot recreate: replacing a body containing these
+// would silently destroy them, so body replace warns about each one up front.
+const NON_RECONSTRUCTABLE_BLOCK_TYPES = new Set([
+  "child_database",
+  "child_page",
+  "synced_block",
+  "column_list",
+  "column",
+  "table",
+  "table_of_contents",
+  "image",
+  "video",
+  "file",
+  "pdf",
+  "embed",
+  "link_preview",
+  "template",
+  "breadcrumb",
+  "unsupported",
+]);
+
+// Flatten a retrieveBlockTree result (children live at block[block.type].children) so the
+// destroyed-block count and warnings scan see nested blocks, not just the top level.
+function flattenBlocks(blocks = []) {
+  const flat = [];
+  for (const block of blocks) {
+    flat.push(block);
+    const children = block[block.type]?.children;
+    if (Array.isArray(children)) flat.push(...flattenBlocks(children));
+  }
+  return flat;
+}
 
 class CommandHandlers {
   constructor({ api, gateway, stdin }) {
@@ -131,6 +165,12 @@ class CommandHandlers {
   async pagePropertiesUpdate(pageId, propertiesArg, dryRun, verbose = false) {
     const current = await this.api.retrievePage(pageId);
     const registryEntry = await this.gateway.assertAllowedPage(current);
+    if (registryEntry.gateway) {
+      throw new GatewayError(
+        "gateway_page_no_properties",
+        "The Gateway page has no database properties to update; use block append or page body replace to edit its body."
+      );
+    }
     const dataSourceId = current.parent.data_source_id || current.parent.database_id;
     const schema = normalizeSchema(await this.api.retrieveDataSource(dataSourceId));
     const input = readJsonArg(propertiesArg);
@@ -171,6 +211,71 @@ class CommandHandlers {
       block_ids: (response.results || []).map((block) => block.id).filter(Boolean),
     };
     if (options.verbose) result.response = response;
+    else result.hint = VERBOSE_HINT;
+    return result;
+  }
+
+  async pageBodyReplace(pageId, options = {}) {
+    const page = await this.api.retrievePage(pageId);
+    await this.gateway.assertAllowedPage(page);
+    const raw = await readContentInput(options, this.stdin);
+    if (raw === undefined) {
+      throw new GatewayError("argument_missing", "page body replace requires --content or stdin.");
+    }
+    const children = blocksFromInput(raw);
+
+    // Fetch the full tree so the diff and counts reflect nested children, not just the top level.
+    const currentTree = await this.retrieveBlockTree(pageId);
+    // Deleting a top-level block cascades to its children, so we only issue top-level deletes...
+    const originalBlockIds = currentTree.map((block) => block.id).filter(Boolean);
+    const flattened = flattenBlocks(currentTree);
+    // ...but the destroyed count is the recursive total (cascade), kept consistent across preview/apply.
+    const destroyedBlockCount = flattened.length;
+
+    // Render both sides the same way so a no-op replace shows no spurious formatting churn.
+    const before = markdownFromBlocks(currentTree);
+    const after = markdownFromBlocks(children);
+    const diff = lineDiff(before, after);
+
+    const lostTypes = flattened.filter((block) => NON_RECONSTRUCTABLE_BLOCK_TYPES.has(block.type));
+    const warnings = [];
+    if (lostTypes.length) {
+      const distinctTypes = [...new Set(lostTypes.map((block) => block.type))].join(", ");
+      warnings.push(
+        `This replace will permanently delete ${lostTypes.length} block(s) Markdown cannot recreate (${distinctTypes}); they will be lost. The Gateway registry lives in child_database/mention blocks — do not replace the Gateway page body wholesale if it holds the registry.`
+      );
+    }
+
+    if (options.dryRun) {
+      return {
+        dry_run: true,
+        page: { id: pageId },
+        diff,
+        removed_block_count: destroyedBlockCount,
+        new_block_count: children.length,
+        ...(warnings.length ? { warnings } : {}),
+      };
+    }
+
+    if (!options.confirm) {
+      throw new GatewayError(
+        "confirmation_required",
+        "Refusing to replace the page body without --confirm. Re-run with --dry-run to preview the diff, or pass --confirm to apply the destructive replace."
+      );
+    }
+
+    // Append-first for safety: the new body exists before we remove the old blocks.
+    const appendResponse = await this.api.appendBlocks(pageId, children);
+    for (const id of originalBlockIds) {
+      await this.api.deleteBlock(id);
+    }
+    const result = {
+      page_id: pageId,
+      appended_count: children.length,
+      deleted_count: destroyedBlockCount,
+      ...(warnings.length ? { warnings } : {}),
+    };
+    if (options.verbose) result.response = appendResponse;
     else result.hint = VERBOSE_HINT;
     return result;
   }

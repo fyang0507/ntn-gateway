@@ -74,6 +74,10 @@ class NotionGatewayApi {
   appendBlocks(blockId, children) {
     return this.client.blocks.children.append({ block_id: blockId, children });
   }
+
+  deleteBlock(blockId) {
+    return this.client.blocks.delete({ block_id: blockId });
+  }
 }
 
 module.exports = { createNotionClient, NotionGatewayApi, collectPaginated };
