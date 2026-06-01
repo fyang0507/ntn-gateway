@@ -35,6 +35,7 @@ Choose the lightest durable action that preserves shared state:
 Notion pages are human-visible artifacts. Do not treat them like private scratch files.
 
 - Append new information instead of rewriting existing human-authored body content.
+- `page body replace` is the escape hatch for mid-page edits/reordering append cannot do, but it is destructive: it clears the body and recreates it from Markdown. Gate it behind `--dry-run` (preview the diff + warnings) then `--confirm`. It cannot reconstruct child_database/child_page/table/column/media blocks, so never replace a body that holds the database registry (the Gateway page) wholesale — append there instead.
 - For intricate corrections, create a replacement or follow-up page and archive/delete the old page only when that workflow is supported and clearly safer.
 - Validate live schema immediately before property-bearing creates or updates.
 - If a write creates a reusable database or durable collaboration surface, add it to the Gateway page as an inline `@`-mention (not a link-to-page block) so future agents can discover its name and canonical data source ID. `ntn-gateway database create` returns this reminder too.
@@ -47,6 +48,7 @@ Notion pages are human-visible artifacts. Do not treat them like private scratch
 - Create page: `ntn-gateway page create --database <data-source-id> --title "..." [--properties @props.json] [--content <markdown>|stdin|--stdin]`
 - Update properties: `ntn-gateway page properties update <page-id> --properties @props.json [--dry-run]`
 - Append body: `ntn-gateway block append <page-id> (--content <markdown>|stdin|--stdin) [--dry-run]`
+- Replace body (mid-page edit/reorder): `ntn-gateway page body replace <page-id> (--content <markdown>|stdin|--stdin) [--dry-run] [--confirm]`
 - Roll up work across Gateway databases: `ntn-gateway aggregate pages --status "Not started,In progress" [--since YYYY-MM-DD] [--until YYYY-MM-DD]`
 - Read rows of one database: `ntn datasources query <data-source-id> [--filter ...] [--sort ...] [--limit N] [--plain|--json]` (needs `ntn login`)
 

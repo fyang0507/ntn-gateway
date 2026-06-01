@@ -241,6 +241,145 @@ test("block append --verbose includes the full API response and drops the hint",
   assert.equal(result.hint, undefined);
 });
 
+test("page get succeeds on the Gateway page itself (workspace parent, id match)", async () => {
+  const result = await dispatch(["page", "get", gatewayId], context());
+
+  assert.equal(result.id, gatewayId);
+});
+
+test("block append succeeds on the Gateway page itself", async () => {
+  const result = await dispatch(
+    ["block", "append", gatewayId, "--content", "First\n\nSecond"],
+    context()
+  );
+
+  assert.equal(result.page_id, gatewayId);
+  assert.equal(result.appended_count, 2);
+});
+
+test("page properties update on the Gateway page is rejected with a clear error", async () => {
+  await assert.rejects(
+    dispatch(
+      ["page", "properties", "update", gatewayId, "--properties", JSON.stringify({ Status: "Done" })],
+      context()
+    ),
+    /no database properties/
+  );
+});
+
+test("page body replace dry-run returns a diff and counts without mutating", async () => {
+  const deletedBlockIds = [];
+  const result = await dispatch(
+    ["page", "body", "replace", pageId, "--content", "## New\n- one", "--dry-run"],
+    context({ deletedBlockIds, pageBlocks: pageBlocksWithIds() })
+  );
+
+  assert.equal(result.dry_run, true);
+  assert.equal(result.page.id, pageId);
+  assert.ok(Array.isArray(result.diff));
+  // Diff is rendered-vs-rendered: the old heading/bullet are removed, the new ones added.
+  assert.ok(result.diff.includes("-## Status"));
+  assert.ok(result.diff.includes("+## New"));
+  assert.equal(result.removed_block_count, 2);
+  assert.equal(result.new_block_count, 2);
+  assert.equal(deletedBlockIds.length, 0);
+});
+
+test("page body replace dry-run shows no diff churn for an identical body", async () => {
+  // Supplying Markdown that re-renders to the same blocks should produce no +/- lines.
+  const result = await dispatch(
+    ["page", "body", "replace", pageId, "--content", "## Status\n- a", "--dry-run"],
+    context({ pageBlocks: pageBlocksWithIds() })
+  );
+
+  assert.ok(result.diff.every((line) => line.startsWith(" ")));
+});
+
+test("page body replace counts nested children in the destroyed total", async () => {
+  // 1 top-level toggle with 2 children = 3 destroyed blocks, but only 1 top-level delete.
+  const deletedBlockIds = [];
+  const result = await dispatch(
+    ["page", "body", "replace", pageId, "--content", "## New", "--confirm"],
+    context({
+      deletedBlockIds,
+      pageBlocks: [{ id: "block-toggle", type: "toggle", has_children: true, toggle: { rich_text: [{ plain_text: "More" }] } }],
+      childBlocks: {
+        "block-toggle": [
+          { id: "block-child-1", type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "x" }] } },
+          { id: "block-child-2", type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "y" }] } },
+        ],
+      },
+    })
+  );
+
+  assert.equal(result.deleted_count, 3);
+  assert.deepEqual(deletedBlockIds, ["block-toggle"]);
+});
+
+test("page body replace rejects empty/whitespace content before any mutation", async () => {
+  const deletedBlockIds = [];
+  await assert.rejects(
+    dispatch(
+      ["page", "body", "replace", pageId, "--content", "   \n  ", "--confirm"],
+      context({ deletedBlockIds, pageBlocks: pageBlocksWithIds() })
+    ),
+    /No block content/
+  );
+  assert.equal(deletedBlockIds.length, 0);
+});
+
+test("page body replace refuses to apply without --confirm", async () => {
+  await assert.rejects(
+    dispatch(
+      ["page", "body", "replace", pageId, "--content", "## New"],
+      context({ pageBlocks: pageBlocksWithIds() })
+    ),
+    /--confirm/
+  );
+});
+
+test("page body replace with --confirm appends new blocks and deletes all originals", async () => {
+  const deletedBlockIds = [];
+  const result = await dispatch(
+    ["page", "body", "replace", pageId, "--content", "## New\n- one", "--confirm"],
+    context({ deletedBlockIds, pageBlocks: pageBlocksWithIds() })
+  );
+
+  assert.equal(result.page_id, pageId);
+  assert.equal(result.appended_count, 2);
+  assert.equal(result.deleted_count, 2);
+  assert.deepEqual(deletedBlockIds, ["block-aaa", "block-bbb"]);
+  assert.match(result.hint, /--verbose/);
+  assert.equal(result.response, undefined);
+});
+
+test("page body replace --verbose includes the append response and drops the hint", async () => {
+  const result = await dispatch(
+    ["page", "body", "replace", pageId, "--content", "## New", "--confirm"],
+    context({ pageBlocks: pageBlocksWithIds() }),
+    { verbose: true }
+  );
+
+  assert.ok(result.response.results.length >= 1);
+  assert.equal(result.hint, undefined);
+});
+
+test("page body replace warns when the current body holds a child_database block", async () => {
+  const result = await dispatch(
+    ["page", "body", "replace", pageId, "--content", "## New", "--dry-run"],
+    context({
+      pageBlocks: [
+        { id: "block-ccc", type: "child_database", child_database: { title: "Registry" } },
+        { id: "block-bbb", type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "b" }] } },
+      ],
+    })
+  );
+
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /child_database/);
+  assert.match(result.warnings[0], /1 block/);
+});
+
 test("page properties update is terse by default and omits the change plan", async () => {
   const result = await dispatch(
     ["page", "properties", "update", pageId, "--properties", JSON.stringify({ Status: "Done" })],
@@ -577,6 +716,9 @@ function mockClient(options = {}) {
           if (block_id === gatewayId) {
             return { has_more: false, results: options.blocks || gatewayBlocks() };
           }
+          if (options.childBlocks && options.childBlocks[block_id]) {
+            return { has_more: false, results: options.childBlocks[block_id] };
+          }
           return {
             has_more: false,
             results: options.pageBlocks || [{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "Body preview" }] } }],
@@ -585,6 +727,10 @@ function mockClient(options = {}) {
         append: async ({ children }) => ({
           results: children.map((child, index) => ({ ...child, id: `block-${index}` })),
         }),
+      },
+      delete: async ({ block_id }) => {
+        if (options.deletedBlockIds) options.deletedBlockIds.push(block_id);
+        return { id: block_id, archived: true };
       },
     },
     dataSources: {
@@ -610,6 +756,13 @@ function mockClient(options = {}) {
       }),
     },
   };
+}
+
+function pageBlocksWithIds() {
+  return [
+    { id: "block-aaa", type: "heading_2", heading_2: { rich_text: [{ plain_text: "Status" }] } },
+    { id: "block-bbb", type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "a" }] } },
+  ];
 }
 
 function gatewayPage() {

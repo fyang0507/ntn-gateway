@@ -52,6 +52,18 @@ async function dispatch(args, context, options = {}) {
     return handlers.pagePropertiesUpdate(pageId, requireFlag(flags, "properties"), Boolean(flags.dry_run), verbose);
   }
 
+  if (noun === "page" && verb === "body" && subcommand === "replace") {
+    const pageId = requireArg(rest[0], "page-id");
+    const { flags } = parseFlags(rest.slice(1));
+    return handlers.pageBodyReplace(pageId, {
+      content: flags.content,
+      stdin: Boolean(flags.stdin),
+      dryRun: Boolean(flags.dry_run),
+      confirm: Boolean(flags.confirm),
+      verbose,
+    });
+  }
+
   if (noun === "page" && verb === "update") {
     const pageId = requireArg(subcommand, "page-id");
     const { flags } = parseFlags(rest);
