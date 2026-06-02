@@ -42,6 +42,7 @@ async function dispatch(args, context, options = {}) {
       dryRun: Boolean(flags.dry_run),
       content: flags.content,
       stdin: Boolean(flags.stdin),
+      allowNewOptions: Boolean(flags.allow_new_options),
       verbose,
     });
   }
@@ -49,7 +50,7 @@ async function dispatch(args, context, options = {}) {
   if (noun === "page" && verb === "properties" && subcommand === "update") {
     const pageId = requireArg(rest[0], "page-id");
     const { flags } = parseFlags(rest.slice(1));
-    return handlers.pagePropertiesUpdate(pageId, requireFlag(flags, "properties"), Boolean(flags.dry_run), verbose);
+    return handlers.pagePropertiesUpdate(pageId, requireFlag(flags, "properties"), Boolean(flags.dry_run), verbose, Boolean(flags.allow_new_options));
   }
 
   if (noun === "page" && verb === "body" && subcommand === "replace") {
@@ -67,7 +68,7 @@ async function dispatch(args, context, options = {}) {
   if (noun === "page" && verb === "update") {
     const pageId = requireArg(subcommand, "page-id");
     const { flags } = parseFlags(rest);
-    return handlers.pagePropertiesUpdate(pageId, requireFlag(flags, "properties"), Boolean(flags.dry_run), verbose);
+    return handlers.pagePropertiesUpdate(pageId, requireFlag(flags, "properties"), Boolean(flags.dry_run), verbose, Boolean(flags.allow_new_options));
   }
 
   if (noun === "block" && verb === "append") {

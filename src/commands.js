@@ -1,6 +1,6 @@
 const { GatewayError } = require("./errors");
 const { normalizeSchema, normalizePage } = require("./normalize");
-const { buildPageProperties } = require("./properties");
+const { buildPageProperties, newOptionsForInput } = require("./properties");
 const { canonicalId } = require("./text");
 const { markdownFromBlocks } = require("./markdown");
 const { readJsonArg, readContentInput, blocksFromInput } = require("./io");
@@ -166,16 +166,21 @@ class CommandHandlers {
     const input = readJsonArg(propertiesArg);
     const body = {
       parent: { type: "data_source_id", data_source_id: dataSourceId },
-      properties: buildPageProperties(schema, title, input),
+      properties: buildPageProperties(schema, title, input, Boolean(options.allowNewOptions)),
     };
     const content = await readContentInput(options, this.stdin);
     if (content !== undefined) {
       body.children = blocksFromInput(content);
     }
     if (options.dryRun) {
+      const newOptions = newOptionsForInput(schema, input);
       return {
         dry_run: true,
-        plan: { database: { id: dataSourceId, title: schema.title }, request: body },
+        plan: {
+          database: { id: dataSourceId, title: schema.title },
+          request: body,
+          ...(newOptions.length ? { new_options: newOptions } : {}),
+        },
       };
     }
     const page = await this.api.createPage(body);
@@ -191,7 +196,7 @@ class CommandHandlers {
     return result;
   }
 
-  async pagePropertiesUpdate(pageId, propertiesArg, dryRun, verbose = false) {
+  async pagePropertiesUpdate(pageId, propertiesArg, dryRun, verbose = false, allowNewOptions = false) {
     const current = await this.api.retrievePage(pageId);
     const registryEntry = await this.gateway.assertAllowedPage(current);
     if (registryEntry.gateway) {
@@ -203,12 +208,14 @@ class CommandHandlers {
     const dataSourceId = current.parent.data_source_id || current.parent.database_id;
     const schema = normalizeSchema(await this.api.retrieveDataSource(dataSourceId));
     const input = readJsonArg(propertiesArg);
-    const body = { properties: buildPageProperties(schema, undefined, input) };
+    const body = { properties: buildPageProperties(schema, undefined, input, allowNewOptions) };
+    const newOptions = newOptionsForInput(schema, input);
     const plan = {
       page: normalizePage(current),
       database: { id: dataSourceId, title: registryEntry.title },
       request: body,
       dry_run: Boolean(dryRun),
+      ...(newOptions.length ? { new_options: newOptions } : {}),
     };
     if (dryRun) return { plan };
     const page = await this.api.updatePage(pageId, body);
