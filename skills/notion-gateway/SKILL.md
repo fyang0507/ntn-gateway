@@ -29,6 +29,8 @@ Choose the lightest durable action that preserves shared state:
 - For source links in page bodies, put the URL on its own paragraph or use `Source: [label](URL)`; the CLI converts source-only links into Notion bookmark blocks instead of plain Markdown or HTML.
 - To make a real, clickable link to another Notion page in body content, write `[[page-id]]` (optionally `[[page-id|Label]]`); it becomes a native page mention rather than inert `[Name]` text, and `page get` round-trips it back to `[[page-id]]`. To relate pages structurally, set a relation property to an array of page IDs (`{"Related": ["<page-id>"]}`); the related data source must be shared with the integration. Never hand-write plain-text `[Name]` placeholders for links.
 - Use `Agent Notes` property only for durable future-agent behavior, such as "skip this for today suggestions because Fred saved it for next month."
+- For ambiguous or schema-affecting writes, run `--dry-run` first to preview the request (and, for select/multi_select, any options that would be newly created) before applying.
+- Reuse existing `select`/`multi_select` options before inventing new ones. An unrecognized value fails closed with the live options in the error payload — read them and pick an existing fit (e.g. `high-priority`, not a new `urgent`). Only when none fits, re-run the same write with `--allow-new-options` to let Notion create the option by name. `status` options are UI-managed and cannot be created this way; a new status value always fails.
 
 ## Page Boundary
 

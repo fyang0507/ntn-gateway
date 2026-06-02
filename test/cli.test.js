@@ -167,6 +167,106 @@ test("page create fails closed on invalid option values", async () => {
   );
 });
 
+test("writing an existing select/multi_select option needs no flag and succeeds", async () => {
+  const result = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "Existing options", "--properties", JSON.stringify({ Priority: "High", Tags: ["Agent", "Research"] }), "--dry-run"],
+    context()
+  );
+
+  assert.equal(result.dry_run, true);
+  assert.deepEqual(result.plan.request.properties.Priority, { select: { name: "High" } });
+  assert.deepEqual(result.plan.request.properties.Tags, { multi_select: [{ name: "Agent" }, { name: "Research" }] });
+  // No new options were introduced, so the plan omits new_options entirely.
+  assert.equal(result.plan.new_options, undefined);
+});
+
+test("a new select value without --allow-new-options fails with property_new_option carrying new + existing", async () => {
+  const error = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "New select", "--properties", JSON.stringify({ Priority: "Urgent" }), "--dry-run"],
+    context()
+  ).then(() => null, (err) => err);
+
+  assert.ok(error, "expected the write to reject");
+  assert.equal(error.code, "property_new_option");
+  assert.deepEqual(error.details.new, ["Urgent"]);
+  assert.deepEqual(error.details.existing, ["Low", "High"]);
+  assert.equal(error.details.property, "Priority");
+  assert.match(error.message, /--allow-new-options/);
+});
+
+test("a new multi_select value without --allow-new-options fails with all unrecognized values in new", async () => {
+  const error = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "New tags", "--properties", JSON.stringify({ Tags: ["Agent", "Spike", "Triage"] }), "--dry-run"],
+    context()
+  ).then(() => null, (err) => err);
+
+  assert.ok(error, "expected the write to reject");
+  assert.equal(error.code, "property_new_option");
+  assert.deepEqual(error.details.new, ["Spike", "Triage"]);
+  assert.deepEqual(error.details.existing, ["Agent", "Research"]);
+});
+
+test("a new select/multi_select value WITH --allow-new-options passes through unchanged", async () => {
+  const result = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "Create options", "--properties", JSON.stringify({ Priority: "Urgent", Tags: ["Spike"] }), "--allow-new-options", "--dry-run"],
+    context()
+  );
+
+  assert.equal(result.dry_run, true);
+  // coerceProperty already emits { name }; Notion auto-creates the option on write.
+  assert.deepEqual(result.plan.request.properties.Priority, { select: { name: "Urgent" } });
+  assert.deepEqual(result.plan.request.properties.Tags, { multi_select: [{ name: "Spike" }] });
+});
+
+test("dry-run plan previews which new options would be created under new_options", async () => {
+  const result = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "Preview options", "--properties", JSON.stringify({ Priority: "Urgent", Tags: ["Agent", "Spike"] }), "--allow-new-options", "--dry-run"],
+    context()
+  );
+
+  assert.deepEqual(result.plan.new_options, [
+    { property: "Priority", values: ["Urgent"] },
+    { property: "Tags", values: ["Spike"] },
+  ]);
+});
+
+test("page properties update dry-run reports new_options and applies with --allow-new-options", async () => {
+  const result = await dispatch(
+    ["page", "properties", "update", pageId, "--properties", JSON.stringify({ Priority: "Urgent" }), "--allow-new-options", "--dry-run"],
+    context()
+  );
+
+  assert.deepEqual(result.plan.new_options, [{ property: "Priority", values: ["Urgent"] }]);
+
+  const applied = await dispatch(
+    ["page", "properties", "update", pageId, "--properties", JSON.stringify({ Priority: "Urgent" }), "--allow-new-options"],
+    context()
+  );
+  assert.equal(applied.page.id, pageId);
+});
+
+test("a new status value still fails closed with property_option_invalid even with --allow-new-options", async () => {
+  const error = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "New status", "--properties", JSON.stringify({ Status: "Maybe" }), "--allow-new-options", "--dry-run"],
+    context()
+  ).then(() => null, (err) => err);
+
+  assert.ok(error, "expected the write to reject");
+  assert.equal(error.code, "property_option_invalid");
+  assert.equal(error.details.value, "Maybe");
+});
+
+test("an unknown property name still fails with property_unknown regardless of --allow-new-options", async () => {
+  const error = await dispatch(
+    ["page", "create", "--database", dataSourceId, "--title", "Bad name", "--properties", JSON.stringify({ Nonexistent: "x" }), "--allow-new-options", "--dry-run"],
+    context()
+  ).then(() => null, (err) => err);
+
+  assert.ok(error, "expected the write to reject");
+  assert.equal(error.code, "property_unknown");
+  assert.deepEqual(error.details.unknown, ["Nonexistent"]);
+});
+
 test("page get rejects pages outside Gateway-approved parents", async () => {
   await assert.rejects(
     dispatch(["page", "get", pageId], context({ pageParent: { type: "data_source_id", data_source_id: "99999999-9999-9999-9999-999999999999" } })),
@@ -948,7 +1048,12 @@ function dataSource(id, title = "Technical Projects") {
       Tags: {
         id: "tags",
         type: "multi_select",
-        multi_select: { options: [{ name: "Agent" }] },
+        multi_select: { options: [{ name: "Agent" }, { name: "Research" }] },
+      },
+      Priority: {
+        id: "priority",
+        type: "select",
+        select: { options: [{ name: "Low" }, { name: "High" }] },
       },
       "Start Date": { id: "start", type: "date", date: {} },
       "End Date": { id: "end", type: "date", date: {} },

@@ -7,8 +7,8 @@ Usage:
   ntn-gateway database schema <data-source-id>
   ntn-gateway database create --title "..." --dry-run
   ntn-gateway page get <page-id>
-  ntn-gateway page create --database <data-source-id> --title "..." [--properties @props.json] [--content <markdown>|stdin|--stdin] [--dry-run]
-  ntn-gateway page properties update <page-id> --properties @props.json [--dry-run]
+  ntn-gateway page create --database <data-source-id> --title "..." [--properties @props.json] [--content <markdown>|stdin|--stdin] [--dry-run] [--allow-new-options]
+  ntn-gateway page properties update <page-id> --properties @props.json [--dry-run] [--allow-new-options]
   ntn-gateway block append <page-id> (--content <markdown>|stdin|--stdin) [--dry-run]
   ntn-gateway page body replace <page-id> (--content <markdown>|stdin|--stdin) [--dry-run] [--confirm]
   ntn-gateway aggregate pages [--databases <id|title,...>] [--status "..."] [--all] [--date-filter '<json>'] [--limit N]
@@ -75,6 +75,14 @@ Content:
   It still cannot recreate standalone database, child-page, table, column, or media
   (image/video/file/pdf/embed) blocks, nor other inline mention types (user/date/link_preview);
   dry-run lists each of those as a warning so nothing is dropped silently.
+
+Options (select / multi_select):
+  Writing an unrecognized select or multi_select value fails closed with "property_new_option",
+  whose details carry "new" (your unrecognized values) and "existing" (the live options) so you
+  can reuse an existing option instead of inventing a near-duplicate. If none fits, re-run the same
+  write with --allow-new-options to let Notion create the new option(s) by name. --dry-run previews
+  which options would be created under "new_options". status options are UI-managed: an unrecognized
+  status value always fails with "property_option_invalid" and --allow-new-options does not apply.
 
 Links:
   Write a real, clickable page link with [[page-id]] in Markdown body content; it becomes a native
