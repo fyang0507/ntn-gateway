@@ -9,6 +9,11 @@ const {
   extractReadableText,
   parseIsoDuration,
   titleFromHtml,
+  xArticleFromTweetResultPayload,
+  xArticleIdFromUrl,
+  xArticleUrlFromInitialState,
+  xStatusIdFromUrl,
+  estimateUrl,
 } = require("../skills/technical-reading-bookmark/scripts/extract-reading-metadata");
 
 test("counts English words and Chinese characters separately", () => {
@@ -121,4 +126,123 @@ test("allows overriding the personal multiplier", () => {
   assert.equal(result.estimated_minutes, 1);
   assert.equal(result.raw_minutes, 1);
   assert.equal(result.personal_multiplier, 1);
+});
+
+test("recognizes X status and article URLs", () => {
+  assert.equal(xStatusIdFromUrl("https://x.com/ankrgyl/status/2062635408182427859"), "2062635408182427859");
+  assert.equal(xStatusIdFromUrl("https://twitter.com/ankrgyl/status/2062635408182427859?s=20"), "2062635408182427859");
+  assert.equal(xArticleIdFromUrl("https://x.com/i/article/2062633861515984896"), "2062633861515984896");
+});
+
+test("finds an X article URL in initial tweet state", () => {
+  const html = `
+    <script>
+      window.__INITIAL_STATE__={
+        "entities":{
+          "tweets":{
+            "entities":{
+              "2062635408182427859":{
+                "entities":{
+                  "urls":[{"expanded_url":"http://x.com/i/article/2062633861515984896"}]
+                }
+              }
+            }
+          }
+        }
+      };
+    </script>
+  `;
+
+  assert.equal(
+    xArticleUrlFromInitialState(html, "2062635408182427859"),
+    "http://x.com/i/article/2062633861515984896",
+  );
+});
+
+test("normalizes X article GraphQL payloads", () => {
+  const article = xArticleFromTweetResultPayload({
+    data: {
+      tweetResult: {
+        result: {
+          article: {
+            article_results: {
+              result: {
+                rest_id: "2062633861515984896",
+                title: "How we made continuous trace intelligence possible at scale",
+                plain_text: "trace ".repeat(2300),
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(article.id, "2062633861515984896");
+  assert.equal(article.title, "How we made continuous trace intelligence possible at scale");
+  assert.equal(article.source, "x_tweet_article_graphql");
+  assert.equal(article.text, "trace ".repeat(2300).trim());
+});
+
+test("estimates X article bookmarks from tweet article payloads", async () => {
+  const originalFetch = global.fetch;
+  const articleText = "trace ".repeat(2300);
+  const calls = [];
+  global.fetch = async (input) => {
+    calls.push(String(input));
+    if (String(input).includes("/status/2062635408182427859")) {
+      return new Response(`
+        <script>
+          window.__INITIAL_STATE__={
+            "entities":{
+              "tweets":{
+                "entities":{
+                  "2062635408182427859":{
+                    "entities":{
+                      "urls":[{"expanded_url":"http://x.com/i/article/2062633861515984896"}]
+                    }
+                  }
+                }
+              }
+            }
+          };
+        </script>
+      `, { status: 200, headers: { "content-type": "text/html" } });
+    }
+    if (String(input).includes("/guest/activate.json")) {
+      return Response.json({ guest_token: "guest-token" });
+    }
+    if (String(input).includes("/TweetResultByRestId")) {
+      return Response.json({
+        data: {
+          tweetResult: {
+            result: {
+              article: {
+                article_results: {
+                  result: {
+                    rest_id: "2062633861515984896",
+                    title: "How we made continuous trace intelligence possible at scale",
+                    plain_text: articleText,
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${input}`);
+  };
+
+  try {
+    const result = await estimateUrl("https://x.com/ankrgyl/status/2062635408182427859");
+
+    assert.equal(result.title, "How we made continuous trace intelligence possible at scale");
+    assert.equal(result.mode, "x_article_text");
+    assert.equal(result.final_url, "http://x.com/i/article/2062633861515984896");
+    assert.equal(result.estimated_minutes, 15);
+    assert.ok(calls.some((call) => call.includes("/TweetResultByRestId")));
+  } finally {
+    global.fetch = originalFetch;
+  }
 });

@@ -4,6 +4,9 @@
 const DEFAULT_ENGLISH_WPM = 225;
 const DEFAULT_CHINESE_CPM = 500;
 const DEFAULT_PERSONAL_MULTIPLIER = 1.3;
+const DEFAULT_X_ARTICLE_ENGLISH_WPM = 200;
+const X_BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
+const X_TWEET_RESULT_QUERY_ID = "SgZWKwvBiOKrSC0QeOGvXw";
 
 function decodeEntities(value) {
   return String(value || "")
@@ -30,6 +33,40 @@ function stripTags(html) {
       .replace(/<aside\b[\s\S]*?<\/aside>/gi, " ")
       .replace(/<[^>]+>/g, " "),
   ).replace(/\s+/g, " ").trim();
+}
+
+function parseJsonAssignment(html, variableName) {
+  const marker = `${variableName}=`;
+  const start = String(html || "").indexOf(marker);
+  if (start < 0) return undefined;
+
+  const jsonStart = start + marker.length;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = jsonStart; index < html.length; index += 1) {
+    const char = html[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === "\"") inString = false;
+      continue;
+    }
+
+    if (char === "\"") inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(jsonStart, index + 1));
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 function metaContent(html, names) {
@@ -82,6 +119,148 @@ function scriptJsonByVar(html, variableName) {
     }
   }
   return undefined;
+}
+
+function isXHost(hostname) {
+  const host = String(hostname || "").replace(/^www\./, "").toLowerCase();
+  return host === "x.com" || host === "twitter.com";
+}
+
+function xStatusIdFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (!isXHost(parsed.hostname)) return undefined;
+    return parsed.pathname.match(/\/status\/(\d+)/)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+function xArticleIdFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (!isXHost(parsed.hostname)) return undefined;
+    return parsed.pathname.match(/^\/i\/article\/(\d+)/)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+function xArticleUrlFromInitialState(html, statusId) {
+  const state = parseJsonAssignment(html, "window.__INITIAL_STATE__");
+  const urls = state?.entities?.tweets?.entities?.[statusId]?.entities?.urls || [];
+  return urls
+    .map((entry) => entry.expanded_url || entry.url)
+    .find((value) => xArticleIdFromUrl(value));
+}
+
+function xArticleFromTweetResultPayload(payload) {
+  const article = payload?.data?.tweetResult?.result?.article?.article_results?.result;
+  if (!article) return undefined;
+
+  const blockText = article.content_state?.blocks
+    ?.map((block) => block.text)
+    .filter((text) => meaningfulLength(text) > 0)
+    .join("\n\n");
+  const text = [article.plain_text, blockText, article.preview_text]
+    .map((candidate) => String(candidate || "").trim())
+    .find((candidate) => meaningfulLength(candidate) >= 80);
+  if (!text) return undefined;
+
+  return {
+    id: article.rest_id || article.id,
+    title: cleanTitle(article.title || ""),
+    text,
+    source: "x_tweet_article_graphql",
+  };
+}
+
+function xGraphqlUrl(queryId, operationName, variables, features, fieldToggles) {
+  const params = new URLSearchParams({
+    variables: JSON.stringify(variables),
+    features: JSON.stringify(features),
+    fieldToggles: JSON.stringify(fieldToggles),
+  });
+  return `https://x.com/i/api/graphql/${queryId}/${operationName}?${params}`;
+}
+
+async function activateXGuestToken(fetcher = fetch) {
+  const response = await fetcher("https://api.x.com/1.1/guest/activate.json", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${X_BEARER_TOKEN}`,
+      "user-agent": "Mozilla/5.0",
+    },
+  });
+  if (!response.ok) throw new Error(`X guest activation HTTP ${response.status}`);
+  const body = await response.json();
+  if (!body?.guest_token) throw new Error("X guest activation did not return a guest token");
+  return body.guest_token;
+}
+
+async function fetchXArticleFromTweetId(tweetId, fetcher = fetch) {
+  const guestToken = await activateXGuestToken(fetcher);
+  const features = {
+    creator_subscriptions_tweet_preview_api_enabled: true,
+    premium_content_api_read_enabled: true,
+    communities_web_enable_tweet_community_results_fetch: true,
+    c9s_tweet_anatomy_moderator_badge_enabled: true,
+    responsive_web_grok_analyze_button_fetch_trends_enabled: true,
+    responsive_web_grok_analyze_post_followups_enabled: true,
+    rweb_cashtags_composer_attachment_enabled: true,
+    responsive_web_jetfuel_frame: true,
+    responsive_web_grok_share_attachment_enabled: true,
+    responsive_web_grok_annotations_enabled: true,
+    articles_preview_enabled: true,
+    responsive_web_edit_tweet_api_enabled: true,
+    rweb_conversational_replies_downvote_enabled: true,
+    graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
+    view_counts_everywhere_api_enabled: true,
+    longform_notetweets_consumption_enabled: true,
+    responsive_web_twitter_article_tweet_consumption_enabled: true,
+    content_disclosure_indicator_enabled: true,
+    content_disclosure_ai_generated_indicator_enabled: true,
+    responsive_web_grok_show_grok_translated_post: true,
+    responsive_web_grok_analysis_button_from_backend: true,
+    post_ctas_fetch_enabled: true,
+    rweb_cashtags_enabled: true,
+    freedom_of_speech_not_reach_fetch_enabled: true,
+    standardized_nudges_misinfo: true,
+    tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
+    longform_notetweets_rich_text_read_enabled: true,
+    longform_notetweets_inline_media_enabled: true,
+    profile_label_improvements_pcf_label_in_post_enabled: true,
+    responsive_web_profile_redirect_enabled: true,
+    rweb_tipjar_consumption_enabled: true,
+    verified_phone_label_enabled: true,
+    responsive_web_graphql_timeline_navigation_enabled: true,
+    responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+    responsive_web_enhance_cards_enabled: true,
+  };
+  const fieldToggles = {
+    withArticleRichContentState: true,
+    withArticlePlainText: true,
+    withArticleSummaryText: false,
+    withArticleVoiceOver: false,
+    withGrokAnalyze: false,
+    withDisallowedReplyControls: false,
+  };
+  const variables = {
+    tweetId,
+    withCommunity: false,
+    includePromotedContent: false,
+    withVoice: false,
+  };
+  const response = await fetcher(xGraphqlUrl(X_TWEET_RESULT_QUERY_ID, "TweetResultByRestId", variables, features, fieldToggles), {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${X_BEARER_TOKEN}`,
+      "user-agent": "Mozilla/5.0",
+      "x-guest-token": guestToken,
+    },
+  });
+  if (!response.ok) throw new Error(`X tweet article HTTP ${response.status}`);
+  return xArticleFromTweetResultPayload(await response.json());
 }
 
 function parseIsoDuration(value) {
@@ -264,6 +443,13 @@ function estimateFromText(text, options = {}) {
   };
 }
 
+function estimateFromXArticleText(text, options = {}) {
+  return estimateFromText(text, {
+    ...options,
+    englishWpm: options.englishWpm || DEFAULT_X_ARTICLE_ENGLISH_WPM,
+  });
+}
+
 async function fetchHtml(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
@@ -304,6 +490,24 @@ function parseArgs(argv) {
 
 async function estimateUrl(url, options = {}) {
   const fetched = await fetchHtml(url);
+  const statusId = xStatusIdFromUrl(fetched.final_url || url);
+  if (statusId) {
+    const article = await fetchXArticleFromTweetId(statusId, options.fetcher || fetch).catch(() => undefined);
+    if (article) {
+      return {
+        ok: true,
+        url,
+        final_url: xArticleUrlFromInitialState(fetched.html, statusId) || fetched.final_url,
+        title: article.title || titleFromHtml(fetched.html),
+        mode: "x_article_text",
+        source: article.source,
+        article_id: article.id,
+        ...estimateFromXArticleText(article.text, options),
+        extracted_chars: article.text.length,
+      };
+    }
+  }
+
   const title = titleFromHtml(fetched.html);
   const video = detectVideoDuration(fetched.html, fetched.final_url || url);
   if (video) {
@@ -348,13 +552,20 @@ if (require.main === module) {
 }
 
 module.exports = {
+  activateXGuestToken,
   countReadableUnits,
   detectVideoDuration,
   applyPersonalMultiplier,
   estimateFromText,
+  estimateFromXArticleText,
   estimateFromSeconds,
   extractReadableText,
   estimateUrl,
+  fetchXArticleFromTweetId,
   parseIsoDuration,
   titleFromHtml,
+  xArticleFromTweetResultPayload,
+  xArticleIdFromUrl,
+  xArticleUrlFromInitialState,
+  xStatusIdFromUrl,
 };
