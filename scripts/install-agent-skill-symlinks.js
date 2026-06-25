@@ -54,5 +54,5 @@ for (const skillDir of SKILL_DIRS) {
   const source = resolve(join("skills", skillDir));
   rmSync(dest, { recursive: true, force: true });
   symlinkSync(source, dest, "dir");
-  console.log(`Skill linked -> ${dest} -> ${source}`);
+  console.log(`Agent skill symlink installed -> ${dest} -> ${source}`);
 }

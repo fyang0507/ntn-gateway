@@ -63,7 +63,7 @@ Property JSON is a simple object keyed by live property names; the CLI coerces c
 ## Gotchas
 
 - Generic Notion connectors are too broad for this workspace. Use them only after this SOP establishes the approved surface and canonical IDs.
-- `ntn-gateway` has no `page search` or single-database `rows` command by design; reading/filtering one database belongs to official `ntn datasources query`. That command needs `ntn` logged in (`ntn login`, or `NOTION_WORKSPACE_ID` / `NOTION_API_TOKEN`); a bare token without a selected workspace yields `No workspace selected`. Confirm with `ntn doctor`.
+- `ntn-gateway` has no `page search`, archive/deletion or single-database `rows` command by design; use official CLI like `ntn datasources query`. That command needs `ntn` logged in (`ntn login`, or `NOTION_WORKSPACE_ID` / `NOTION_API_TOKEN`); a bare token without a selected workspace yields `No workspace selected`. Confirm with `ntn doctor`.
 - `ntn pages create` is Markdown-first and should not be used for rows that need database properties initialized.
 - `page properties update` changes database properties only. Use `block append` for body changes.
 - Local tests must stay mocked; do not make test runs mutate the live Notion workspace.

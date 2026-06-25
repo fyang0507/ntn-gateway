@@ -7,7 +7,7 @@
     "ntn-gateway": "bin/ntn-gateway.js"
   },
   "scripts": {
-    "build": "npm run check && node scripts/sync-skills.js",
+    "build": "npm run check && node scripts/install-agent-skill-symlinks.js",
     "test": "node --test",
     "check": "node --check bin/ntn-gateway.js && node --check src/*.js && node --check scripts/*.js && node --check test/*.test.js"
   },

@@ -28,7 +28,7 @@ Use the `Technical Reading` canonical data source ID shown in the rendered conte
 node skills/technical-reading-bookmark/scripts/extract-reading-metadata.js "$URL"
 ```
 
-When running from the synced agent skill folder, the helper is usually at:
+When running from the agent skill symlink, the helper is usually at:
 
 ```bash
 node .agents/skills/technical-reading-bookmark/scripts/extract-reading-metadata.js "$URL"
