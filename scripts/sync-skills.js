@@ -1,4 +1,4 @@
-const { cpSync, existsSync, mkdirSync, rmSync } = require("node:fs");
+const { existsSync, rmSync, symlinkSync } = require("node:fs");
 const { homedir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { loadEnv } = require("../src/config");
@@ -51,8 +51,8 @@ for (const legacySkillDir of LEGACY_SKILL_DIRS) {
 
 for (const skillDir of SKILL_DIRS) {
   const dest = join(dataRepo, ".agents", "skills", skillDir);
-  mkdirSync(dest, { recursive: true });
+  const source = resolve(join("skills", skillDir));
   rmSync(dest, { recursive: true, force: true });
-  cpSync(join("skills", skillDir), dest, { recursive: true });
-  console.log(`Skill synced -> ${dest}`);
+  symlinkSync(source, dest, "dir");
+  console.log(`Skill linked -> ${dest} -> ${source}`);
 }
