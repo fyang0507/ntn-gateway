@@ -66,6 +66,9 @@ Property JSON is a simple object keyed by live property names; the CLI coerces c
 - `ntn-gateway` has no `page search`, archive/deletion or single-database `rows` command by design; use official CLI like `ntn datasources query`. That command needs `ntn` logged in (`ntn login`, or `NOTION_WORKSPACE_ID` / `NOTION_API_TOKEN`); a bare token without a selected workspace yields `No workspace selected`. Confirm with `ntn doctor`.
 - `ntn pages create` is Markdown-first and should not be used for rows that need database properties initialized.
 - `page properties update` changes database properties only. Use `block append` for body changes.
+- `--content` takes literal Markdown, not a path. To load a file, prefix `@` (`--content @notes.md`); a bare existing file path fails closed with `content_looks_like_path` so the file name is never written as body text.
+- `page get` supports lightweight read modes (see `--help`) to verify an append or read one section/preview without pulling the whole body into context. Reach for them instead of a full read when you only need to confirm a change landed.
+- `block append` and `page body replace` auto-chunk appends beyond Notion's 100-block limit; you can append arbitrarily many blocks in one command without hitting the API cap.
 - Local tests must stay mocked; do not make test runs mutate the live Notion workspace.
 - `record_migration/` is historical evidence, not the active product path.
 
