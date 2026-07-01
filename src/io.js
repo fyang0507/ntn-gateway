@@ -44,11 +44,33 @@ function hasStdinInput(stream) {
   }
 }
 
+// Guard against passing a file path as literal Markdown (a common mistake: `--content notes.md`
+// instead of `--content @notes.md`). Only fires when the value is a single-line, reasonably short
+// string that names an existing regular file, so legitimate inline Markdown is unaffected.
+function guardContentLooksLikePath(value) {
+  if (typeof value !== "string" || value.startsWith("@")) return;
+  if (value.includes("\n") || value.length > 4096) return;
+  let isRegularFile = false;
+  try {
+    isRegularFile = fs.existsSync(value) && fs.statSync(value).isFile();
+  } catch (_error) {
+    isRegularFile = false;
+  }
+  if (isRegularFile) {
+    throw new GatewayError(
+      "content_looks_like_path",
+      "Received an existing file path as literal Markdown text. Did you mean --content @<value>?",
+      { path: value }
+    );
+  }
+}
+
 async function readContentInput(options = {}, stdin) {
   if (options.content && options.stdin) {
     throw new GatewayError("argument_conflict", "--content and --stdin cannot be used together.");
   }
   if (options.content) {
+    guardContentLooksLikePath(options.content);
     return readTextArg(options.content);
   }
   if (options.stdin || hasStdinInput(stdin)) {

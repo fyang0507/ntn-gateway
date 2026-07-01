@@ -5,8 +5,13 @@ const { canonicalId } = require("./text");
 const { markdownFromBlocks } = require("./markdown");
 const { readJsonArg, readContentInput, blocksFromInput } = require("./io");
 const { lineDiff } = require("./diff");
+const { shapeContent } = require("./content");
 
 const MAX_BLOCK_DEPTH = 4;
+
+// Notion rejects a single append whose body.children.length exceeds this, so appends over the
+// limit are split into sequential batches (see appendChildren).
+const NOTION_CHILD_LIMIT = 100;
 const { buildAggregateQuery, firstPropertyOfType, validateDateFilter } = require("./query");
 
 // Databases that are not status/date ticketed projects and so do not belong in the
@@ -139,11 +144,16 @@ class CommandHandlers {
     };
   }
 
-  async pageGet(pageId) {
+  async pageGet(pageId, contentOptions = {}) {
     const page = await this.api.retrievePage(pageId);
     await this.gateway.assertAllowedPage(page);
     const blocks = await this.retrieveBlockTree(pageId);
-    const result = normalizePage(page, { content: markdownFromBlocks(blocks) });
+    const markdown = markdownFromBlocks(blocks);
+    const { content, meta } = shapeContent(markdown, contentOptions);
+    const result = normalizePage(page, { content });
+    // shapeContent omits content entirely for --content none; normalizePage always sets it, so drop it.
+    if (content === undefined) delete result.content;
+    Object.assign(result, meta);
     // archived:false is the no-op common case; surface the flag only when the page is archived.
     if (!result.archived) delete result.archived;
     return result;
@@ -225,6 +235,20 @@ class CommandHandlers {
     return result;
   }
 
+  // Append children in sequential batches of <= NOTION_CHILD_LIMIT (Notion rejects a single
+  // append over the limit). Returns the flattened appended blocks plus how many batches ran.
+  async appendChildren(pageId, children) {
+    const results = [];
+    let batchCount = 0;
+    for (let i = 0; i < children.length; i += NOTION_CHILD_LIMIT) {
+      const batch = children.slice(i, i + NOTION_CHILD_LIMIT);
+      const response = await this.api.appendBlocks(pageId, batch);
+      if (Array.isArray(response.results)) results.push(...response.results);
+      batchCount += 1;
+    }
+    return { results, batchCount };
+  }
+
   async blockAppend(pageId, options = {}) {
     const page = await this.api.retrievePage(pageId);
     await this.gateway.assertAllowedPage(page);
@@ -234,19 +258,25 @@ class CommandHandlers {
     }
     const children = blocksFromInput(raw);
     if (options.dryRun) {
-      return {
+      const result = {
         dry_run: true,
         page: { id: pageId },
-        request: { block_id: pageId, children },
+        block_count: children.length,
+        notion_child_limit: NOTION_CHILD_LIMIT,
+        would_require_batches: Math.ceil(children.length / NOTION_CHILD_LIMIT),
       };
+      if (options.verbose) result.request = { block_id: pageId, children };
+      else result.hint = "Terse dry-run. Re-run with --verbose (or --format full) to see the full children request body.";
+      return result;
     }
-    const response = await this.api.appendBlocks(pageId, children);
+    const { results, batchCount } = await this.appendChildren(pageId, children);
     const result = {
       page_id: pageId,
       appended_count: children.length,
-      block_ids: (response.results || []).map((block) => block.id).filter(Boolean),
+      batch_count: batchCount,
+      block_ids: results.map((block) => block.id).filter(Boolean),
     };
-    if (options.verbose) result.response = response;
+    if (options.verbose) result.response = { results };
     else result.hint = VERBOSE_HINT;
     return result;
   }
@@ -290,14 +320,18 @@ class CommandHandlers {
     }
 
     if (options.dryRun) {
-      return {
+      const result = {
         dry_run: true,
         page: { id: pageId },
         diff,
         removed_block_count: destroyedBlockCount,
         new_block_count: children.length,
+        notion_child_limit: NOTION_CHILD_LIMIT,
+        would_require_batches: Math.ceil(children.length / NOTION_CHILD_LIMIT),
         ...(warnings.length ? { warnings } : {}),
       };
+      if (options.verbose) result.request = { block_id: pageId, children };
+      return result;
     }
 
     if (!options.confirm) {
@@ -308,17 +342,18 @@ class CommandHandlers {
     }
 
     // Append-first for safety: the new body exists before we remove the old blocks.
-    const appendResponse = await this.api.appendBlocks(pageId, children);
+    const { results, batchCount } = await this.appendChildren(pageId, children);
     for (const id of originalBlockIds) {
       await this.api.deleteBlock(id);
     }
     const result = {
       page_id: pageId,
       appended_count: children.length,
+      batch_count: batchCount,
       deleted_count: destroyedBlockCount,
       ...(warnings.length ? { warnings } : {}),
     };
-    if (options.verbose) result.response = appendResponse;
+    if (options.verbose) result.response = { results };
     else result.hint = VERBOSE_HINT;
     return result;
   }

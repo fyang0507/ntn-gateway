@@ -303,10 +303,110 @@ test("page get returns the full body as clean Markdown blocks", async () => {
   assert.equal(result.content, "## Status\n\n- a\n- b");
 });
 
+function longBodyBlocks() {
+  // Renders to: "## Alpha\n\n- a1\n- a2\n\n## Beta\n\n- b1\n- b2\n\n### Beta sub\n\n- b3"
+  return [
+    { type: "heading_2", heading_2: { rich_text: [{ plain_text: "Alpha" }] } },
+    { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "a1" }] } },
+    { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "a2" }] } },
+    { type: "heading_2", heading_2: { rich_text: [{ plain_text: "Beta" }] } },
+    { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "b1" }] } },
+    { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "b2" }] } },
+    { type: "heading_3", heading_3: { rich_text: [{ plain_text: "Beta sub" }] } },
+    { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "b3" }] } },
+  ];
+}
+
+test("page get --content full is byte-for-byte equal to the default", async () => {
+  const def = await dispatch(["page", "get", pageId], context({ pageBlocks: longBodyBlocks() }));
+  const full = await dispatch(["page", "get", pageId, "--content", "full"], context({ pageBlocks: longBodyBlocks() }));
+
+  assert.equal(full.content, def.content);
+  assert.equal(full.content_truncated, undefined);
+});
+
+test("page get --content none omits content and returns a hint + totals", async () => {
+  const result = await dispatch(["page", "get", pageId, "--content", "none"], context({ pageBlocks: longBodyBlocks() }));
+
+  assert.equal(result.content, undefined);
+  assert.equal(result.content_omitted, true);
+  assert.match(result.content_hint, /--content full/);
+  assert.ok(result.content_lines_total > 0);
+  assert.ok(result.content_chars_total > 0);
+});
+
+test("page get --content preview returns a short prefix with truncation metadata", async () => {
+  const result = await dispatch(["page", "get", pageId, "--content", "preview"], context({ pageBlocks: longBodyBlocks() }));
+
+  assert.ok(result.content.startsWith("## Alpha"));
+  assert.equal(result.content_truncated, undefined); // short body fits in ~400 chars
+});
+
+test("page get --head-lines returns the first N lines with truncation metadata", async () => {
+  const result = await dispatch(["page", "get", pageId, "--head-lines", "1"], context({ pageBlocks: longBodyBlocks() }));
+
+  assert.equal(result.content, "## Alpha");
+  assert.equal(result.content_truncated, true);
+  assert.match(result.content_note, /--head-lines/);
+  assert.ok(result.content_lines_total > 1);
+});
+
+test("page get --tail-lines returns the last N lines", async () => {
+  const result = await dispatch(["page", "get", pageId, "--tail-lines", "1"], context({ pageBlocks: longBodyBlocks() }));
+
+  assert.equal(result.content, "- b3");
+  assert.equal(result.content_truncated, true);
+});
+
+test("page get --section returns the matching heading through the next same-or-higher heading", async () => {
+  const result = await dispatch(["page", "get", pageId, "--section", "beta"], context({ pageBlocks: longBodyBlocks() }));
+
+  // "## Beta" through the line before the next heading_2 (there is none after), so it includes the ### subsection.
+  assert.equal(result.content_section_found, true);
+  assert.ok(result.content.startsWith("## Beta"));
+  assert.ok(result.content.includes("### Beta sub"));
+  assert.ok(!result.content.includes("## Alpha"));
+});
+
+test("page get --section reports content_section_found:false when no heading matches", async () => {
+  const result = await dispatch(["page", "get", pageId, "--section", "nonexistent"], context({ pageBlocks: longBodyBlocks() }));
+
+  assert.equal(result.content, "");
+  assert.equal(result.content_section_found, false);
+});
+
+test("page get --find returns matching lines with context and a match count", async () => {
+  const result = await dispatch(["page", "get", pageId, "--find", "b1"], context({ pageBlocks: longBodyBlocks() }));
+
+  assert.equal(result.content_find_matches, 1);
+  assert.ok(result.content.includes("- b1"));
+  assert.equal(result.content_truncated, true);
+});
+
+test("page get rejects more than one content-shaping option with argument_conflict", async () => {
+  const error = await dispatch(
+    ["page", "get", pageId, "--head-lines", "2", "--tail-lines", "2"],
+    context({ pageBlocks: longBodyBlocks() })
+  ).then(() => null, (err) => err);
+
+  assert.ok(error, "expected a conflict rejection");
+  assert.equal(error.code, "argument_conflict");
+  assert.match(error.message, /--head-lines/);
+  assert.match(error.message, /--tail-lines/);
+});
+
+test("page get rejects a non-positive --head-lines", async () => {
+  await assert.rejects(
+    dispatch(["page", "get", pageId, "--head-lines", "0"], context({ pageBlocks: longBodyBlocks() })),
+    /positive integer/
+  );
+});
+
 test("block append converts markdown headings and bullets into native blocks", async () => {
   const result = await dispatch(
     ["block", "append", pageId, "--content", "## Status\n- a\n- b", "--dry-run"],
-    context()
+    context(),
+    { verbose: true }
   );
 
   assert.deepEqual(
@@ -314,6 +414,31 @@ test("block append converts markdown headings and bullets into native blocks", a
     ["heading_2", "bulleted_list_item", "bulleted_list_item"]
   );
   assert.equal(result.request.children[0].heading_2.rich_text[0].text.content, "Status");
+});
+
+test("block append dry-run is terse by default: counts and batches, no request body", async () => {
+  const result = await dispatch(
+    ["block", "append", pageId, "--content", "## Status\n- a\n- b", "--dry-run"],
+    context()
+  );
+
+  assert.equal(result.dry_run, true);
+  assert.equal(result.block_count, 3);
+  assert.equal(result.notion_child_limit, 100);
+  assert.equal(result.would_require_batches, 1);
+  assert.equal(result.request, undefined);
+  assert.match(result.hint, /--verbose/);
+});
+
+test("block append dry-run --verbose echoes the full children request body", async () => {
+  const result = await dispatch(
+    ["block", "append", pageId, "--content", "## Status\n- a\n- b", "--dry-run"],
+    context(),
+    { verbose: true }
+  );
+
+  assert.equal(result.request.block_id, pageId);
+  assert.equal(result.request.children.length, 3);
 });
 
 test("block append is terse by default: page_id, count, and block ids only", async () => {
@@ -324,6 +449,7 @@ test("block append is terse by default: page_id, count, and block ids only", asy
 
   assert.equal(result.page_id, pageId);
   assert.equal(result.appended_count, 2);
+  assert.equal(result.batch_count, 1);
   assert.equal(result.block_ids.length, 2);
   assert.equal(result.response, undefined);
   assert.match(result.hint, /--verbose/);
@@ -526,7 +652,8 @@ test("page update remains a compatibility alias for property updates", async () 
 test("block append dry-run converts stdin text into append blocks", async () => {
   const result = await dispatch(
     ["block", "append", pageId, "--stdin", "--dry-run"],
-    context({ stdin: streamFrom("First\n\nSecond") })
+    context({ stdin: streamFrom("First\n\nSecond") }),
+    { verbose: true }
   );
 
   assert.equal(result.dry_run, true);
@@ -536,7 +663,8 @@ test("block append dry-run converts stdin text into append blocks", async () => 
 test("block append dry-run accepts piped content without stdin flag", async () => {
   const result = await dispatch(
     ["block", "append", pageId, "--dry-run"],
-    context({ stdin: streamFrom("First\n\nSecond", { piped: true }) })
+    context({ stdin: streamFrom("First\n\nSecond", { piped: true }) }),
+    { verbose: true }
   );
 
   assert.equal(result.dry_run, true);
@@ -546,7 +674,8 @@ test("block append dry-run accepts piped content without stdin flag", async () =
 test("block append dry-run accepts content like page create", async () => {
   const result = await dispatch(
     ["block", "append", pageId, "--content", "First\n\nSecond", "--dry-run"],
-    context()
+    context(),
+    { verbose: true }
   );
 
   assert.equal(result.dry_run, true);
@@ -564,6 +693,95 @@ test("content input rejects ambiguous sources", async () => {
     ),
     /cannot be used together/
   );
+});
+
+test("--content rejects a bare existing file path and points at @file", async () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const filePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ntn-")), "notes.md");
+  fs.writeFileSync(filePath, "## Real body\n- from file");
+
+  const error = await dispatch(
+    ["block", "append", pageId, "--content", filePath, "--dry-run"],
+    context()
+  ).then(() => null, (err) => err);
+
+  assert.ok(error, "expected a rejection");
+  assert.equal(error.code, "content_looks_like_path");
+  assert.match(error.message, /--content @/);
+  assert.equal(error.details.path, filePath);
+});
+
+test("--content still accepts a normal inline string that is not an existing file path", async () => {
+  const result = await dispatch(
+    ["block", "append", pageId, "--content", "## Status\n- inline", "--dry-run"],
+    context(),
+    { verbose: true }
+  );
+
+  assert.equal(result.dry_run, true);
+  assert.equal(result.request.children[0].type, "heading_2");
+});
+
+test("block append auto-chunks more than 100 blocks into sequential batches", async () => {
+  const markdown = Array.from({ length: 150 }, (_, i) => `- item ${i}`).join("\n");
+  const result = await dispatch(
+    ["block", "append", pageId, "--content", markdown],
+    context()
+  );
+
+  assert.equal(result.appended_count, 150);
+  assert.equal(result.batch_count, 2);
+  assert.equal(result.block_ids.length, 150);
+});
+
+test("block append dry-run reports would_require_batches for over-limit appends", async () => {
+  const markdown = Array.from({ length: 150 }, (_, i) => `- item ${i}`).join("\n");
+  const result = await dispatch(
+    ["block", "append", pageId, "--content", markdown, "--dry-run"],
+    context()
+  );
+
+  assert.equal(result.block_count, 150);
+  assert.equal(result.would_require_batches, 2);
+});
+
+test("page body replace auto-chunks over-limit appends and reports batch_count", async () => {
+  const markdown = Array.from({ length: 150 }, (_, i) => `- item ${i}`).join("\n");
+  const result = await dispatch(
+    ["page", "body", "replace", pageId, "--content", markdown, "--confirm"],
+    context({ pageBlocks: pageBlocksWithIds() })
+  );
+
+  assert.equal(result.appended_count, 150);
+  assert.equal(result.batch_count, 2);
+  assert.equal(result.deleted_count, 2);
+});
+
+test("page body replace dry-run reports notion_child_limit and would_require_batches", async () => {
+  const markdown = Array.from({ length: 150 }, (_, i) => `- item ${i}`).join("\n");
+  const result = await dispatch(
+    ["page", "body", "replace", pageId, "--content", markdown, "--dry-run"],
+    context({ pageBlocks: pageBlocksWithIds() })
+  );
+
+  assert.equal(result.dry_run, true);
+  assert.equal(result.notion_child_limit, 100);
+  assert.equal(result.would_require_batches, 2);
+  assert.equal(result.new_block_count, 150);
+  assert.equal(result.request, undefined);
+});
+
+test("page body replace dry-run --verbose echoes the full children request body", async () => {
+  const result = await dispatch(
+    ["page", "body", "replace", pageId, "--content", "## New\n- one", "--dry-run"],
+    context({ pageBlocks: pageBlocksWithIds() }),
+    { verbose: true }
+  );
+
+  assert.equal(result.request.block_id, pageId);
+  assert.equal(result.request.children.length, result.new_block_count);
 });
 
 test("aggregate pages groups normalized results across the Gateway registry", async () => {

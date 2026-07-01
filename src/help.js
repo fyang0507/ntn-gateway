@@ -6,7 +6,7 @@ Usage:
   ntn-gateway show [--format json|human]
   ntn-gateway database schema <data-source-id>
   ntn-gateway database create --title "..." --dry-run
-  ntn-gateway page get <page-id>
+  ntn-gateway page get <page-id> [--content full|none|preview] [--max-content-chars N] [--head-lines N] [--tail-lines N] [--section <text>] [--find <text>]
   ntn-gateway page create --database <data-source-id> --title "..." [--properties @props.json] [--content <markdown>|stdin|--stdin] [--dry-run] [--allow-new-options]
   ntn-gateway page properties update <page-id> --properties @props.json [--dry-run] [--allow-new-options]
   ntn-gateway block append <page-id> (--content <markdown>|stdin|--stdin) [--dry-run]
@@ -61,8 +61,33 @@ Date filtering:
   database lacks "Start Date"/"End Date", Notion's validation error is surfaced on that
   database's entry as an "error" field and the rest of the sweep still returns.
 
+Reading page bodies:
+  page get returns the full Markdown body in "content" by default. To verify an append or read one
+  section without pulling the whole body into context, pass exactly ONE shaping option (two or more
+  fail with argument_conflict):
+    --content full|none|preview   full (default, whole body); none omits "content" entirely and
+                                  returns content_omitted:true + a content_hint; preview returns the
+                                  first ~400 chars (cut on a line boundary where practical).
+    --max-content-chars N         first N chars of the body.
+    --head-lines N / --tail-lines N   first / last N lines. N must be a positive integer.
+    --section <text>              the section from the first heading whose text contains <text>
+                                  (case-insensitive) through the line before the next heading of the
+                                  same-or-higher level; content_section_found:false if none matches.
+    --find <text>                 every line containing <text> (case-insensitive) with up to 2 lines of
+                                  context each side; adds content_find_matches:N.
+  Whenever content is actually truncated (a shaped slice shorter than the full body), the result
+  carries content_truncated:true, content_lines_total and content_chars_total (of the FULL body), and
+  a content_note naming the flags to read more or the whole body. --content none and a non-matching
+  --section instead report content_omitted:true / content_section_found:false with those totals.
+
 Content:
   --content accepts inline Markdown or @file.md. Piped stdin is read automatically; --stdin explicitly reads stdin.
+  A bare existing file path passed as --content <path> (no leading @) fails with content_looks_like_path
+  so the file is not written verbatim as literal Markdown; use --content @<path> to read the file.
+  block append and page body replace auto-batch appends over 100 blocks (NOTION_CHILD_LIMIT) into
+  sequential appends; results carry batch_count and appended_count. Dry-run is terse by default
+  (block append: block_count; page body replace: new_block_count/removed_block_count; both:
+  notion_child_limit, would_require_batches); pass --verbose to also echo the full children request body.
   Markdown is parsed into native Notion blocks (headings, bulleted/numbered lists, to-dos, quotes,
   fenced code, dividers, nested lists) so the page renders correctly for humans. Source-only URLs
   become bookmark blocks. Raw Notion block JSON (input starting with [ or {) is still passed through.

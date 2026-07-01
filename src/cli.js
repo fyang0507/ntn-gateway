@@ -16,6 +16,81 @@ async function buildHandlers(context) {
   return new CommandHandlers({ api, gateway, stdin: context.stdin });
 }
 
+// Parse and validate the `page get` content-shaping flags. Exactly one shaping mode is allowed
+// at a time; supplying two or more throws argument_conflict naming them.
+function parsePageGetContentOptions(flags) {
+  const parsePositiveInt = (name) => {
+    const raw = flags[name];
+    if (raw === undefined) return undefined;
+    if (raw === true) {
+      throw new GatewayError("argument_invalid", `--${name.replaceAll("_", "-")} requires a positive integer.`);
+    }
+    const value = Number.parseInt(raw, 10);
+    if (!Number.isInteger(value) || value < 1 || String(value) !== String(raw).trim()) {
+      throw new GatewayError("argument_invalid", `--${name.replaceAll("_", "-")} must be a positive integer.`);
+    }
+    return value;
+  };
+
+  const options = {};
+  const active = [];
+
+  if (flags.content !== undefined) {
+    if (flags.content === true || !["full", "none", "preview"].includes(flags.content)) {
+      throw new GatewayError("argument_invalid", "--content must be one of full, none, preview.");
+    }
+    // full is the default no-op; only non-full modes count as an active shaping option.
+    if (flags.content !== "full") {
+      options.content = flags.content;
+      active.push("--content");
+    }
+  }
+
+  const maxContentChars = parsePositiveInt("max_content_chars");
+  if (maxContentChars !== undefined) {
+    options.maxContentChars = maxContentChars;
+    active.push("--max-content-chars");
+  }
+
+  const headLines = parsePositiveInt("head_lines");
+  if (headLines !== undefined) {
+    options.headLines = headLines;
+    active.push("--head-lines");
+  }
+
+  const tailLines = parsePositiveInt("tail_lines");
+  if (tailLines !== undefined) {
+    options.tailLines = tailLines;
+    active.push("--tail-lines");
+  }
+
+  if (flags.section !== undefined) {
+    if (flags.section === true) {
+      throw new GatewayError("argument_invalid", "--section requires the heading text to match.");
+    }
+    options.section = flags.section;
+    active.push("--section");
+  }
+
+  if (flags.find !== undefined) {
+    if (flags.find === true) {
+      throw new GatewayError("argument_invalid", "--find requires the text to search for.");
+    }
+    options.find = flags.find;
+    active.push("--find");
+  }
+
+  if (active.length > 1) {
+    throw new GatewayError(
+      "argument_conflict",
+      `Only one content-shaping option is allowed at a time; received ${active.join(", ")}.`,
+      { conflict: active }
+    );
+  }
+
+  return options;
+}
+
 async function dispatch(args, context, options = {}) {
   const handlers = await buildHandlers(context);
   const verbose = Boolean(options.verbose);
@@ -33,7 +108,9 @@ async function dispatch(args, context, options = {}) {
   }
 
   if (noun === "page" && verb === "get") {
-    return handlers.pageGet(requireArg(subcommand, "page-id"));
+    const pageId = requireArg(subcommand, "page-id");
+    const { flags } = parseFlags(rest);
+    return handlers.pageGet(pageId, parsePageGetContentOptions(flags));
   }
 
   if (noun === "page" && verb === "create") {
