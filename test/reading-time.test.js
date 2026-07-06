@@ -246,3 +246,100 @@ test("estimates X article bookmarks from tweet article payloads", async () => {
     global.fetch = originalFetch;
   }
 });
+
+test("retries transient X article lookup failures before falling back", async () => {
+  const originalFetch = global.fetch;
+  const articleText = "trace ".repeat(2300);
+  let graphqlCalls = 0;
+  global.fetch = async (input) => {
+    if (String(input).includes("/status/2062635408182427859")) {
+      return new Response(`
+        <script>
+          window.__INITIAL_STATE__={
+            "entities":{
+              "tweets":{
+                "entities":{
+                  "2062635408182427859":{
+                    "entities":{
+                      "urls":[{"expanded_url":"http://x.com/i/article/2062633861515984896"}]
+                    }
+                  }
+                }
+              }
+            }
+          };
+        </script>
+      `, { status: 200, headers: { "content-type": "text/html" } });
+    }
+    if (String(input).includes("/guest/activate.json")) {
+      return Response.json({ guest_token: "guest-token" });
+    }
+    if (String(input).includes("/TweetResultByRestId")) {
+      graphqlCalls += 1;
+      if (graphqlCalls === 1) return new Response("try again", { status: 503 });
+      return Response.json({
+        data: {
+          tweetResult: {
+            result: {
+              article: {
+                article_results: {
+                  result: {
+                    rest_id: "2062633861515984896",
+                    title: "How we made continuous trace intelligence possible at scale",
+                    plain_text: articleText,
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${input}`);
+  };
+
+  try {
+    const result = await estimateUrl("https://x.com/ankrgyl/status/2062635408182427859", { xArticleRetryDelayMs: 0 });
+
+    assert.equal(result.title, "How we made continuous trace intelligence possible at scale");
+    assert.equal(result.mode, "x_article_text");
+    assert.equal(result.x_article_attempts, 2);
+    assert.equal(graphqlCalls, 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("reports X article lookup warnings when fallback content is used", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (input) => {
+    if (String(input).includes("/status/2062635408182427859")) {
+      return new Response(`
+        <html>
+          <head><meta property="og:title" content="https://t.co/example"></head>
+          <body><main>${"fallback ".repeat(100)}</main></body>
+        </html>
+      `, { status: 200, headers: { "content-type": "text/html" } });
+    }
+    if (String(input).includes("/guest/activate.json")) {
+      return Response.json({ guest_token: "guest-token" });
+    }
+    if (String(input).includes("/TweetResultByRestId")) {
+      return new Response("unavailable", { status: 503 });
+    }
+    throw new Error(`Unexpected fetch: ${input}`);
+  };
+
+  try {
+    const result = await estimateUrl("https://x.com/ankrgyl/status/2062635408182427859", {
+      xArticleRetries: 1,
+      xArticleRetryDelayMs: 0,
+    });
+
+    assert.equal(result.title, "https://t.co/example");
+    assert.equal(result.mode, "article_text");
+    assert.match(result.warnings[0], /X article extraction failed after 1 attempt/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

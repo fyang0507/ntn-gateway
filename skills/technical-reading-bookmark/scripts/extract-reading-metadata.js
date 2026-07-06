@@ -5,6 +5,8 @@ const DEFAULT_ENGLISH_WPM = 225;
 const DEFAULT_CHINESE_CPM = 500;
 const DEFAULT_PERSONAL_MULTIPLIER = 1.3;
 const DEFAULT_X_ARTICLE_ENGLISH_WPM = 200;
+const DEFAULT_X_ARTICLE_RETRIES = 2;
+const DEFAULT_X_ARTICLE_RETRY_DELAY_MS = 500;
 const X_BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 const X_TWEET_RESULT_QUERY_ID = "SgZWKwvBiOKrSC0QeOGvXw";
 
@@ -263,6 +265,35 @@ async function fetchXArticleFromTweetId(tweetId, fetcher = fetch) {
   return xArticleFromTweetResultPayload(await response.json());
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchXArticleFromTweetIdWithRetry(tweetId, options = {}) {
+  const fetcher = options.fetcher || fetch;
+  const attempts = Math.max(1, Number(options.xArticleRetries || DEFAULT_X_ARTICLE_RETRIES));
+  const delayMs = Math.max(0, Number(options.xArticleRetryDelayMs ?? DEFAULT_X_ARTICLE_RETRY_DELAY_MS));
+  let lastError;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return {
+        article: await fetchXArticleFromTweetId(tweetId, fetcher),
+        attempts: attempt,
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts && delayMs > 0) await sleep(delayMs);
+    }
+  }
+
+  return {
+    article: undefined,
+    attempts,
+    error: lastError?.message || String(lastError || "unknown X article error"),
+  };
+}
+
 function parseIsoDuration(value) {
   const match = String(value || "").match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/i);
   if (!match) return undefined;
@@ -491,8 +522,10 @@ function parseArgs(argv) {
 async function estimateUrl(url, options = {}) {
   const fetched = await fetchHtml(url);
   const statusId = xStatusIdFromUrl(fetched.final_url || url);
+  let xArticleLookup;
   if (statusId) {
-    const article = await fetchXArticleFromTweetId(statusId, options.fetcher || fetch).catch(() => undefined);
+    xArticleLookup = await fetchXArticleFromTweetIdWithRetry(statusId, options);
+    const article = xArticleLookup.article;
     if (article) {
       return {
         ok: true,
@@ -502,6 +535,7 @@ async function estimateUrl(url, options = {}) {
         mode: "x_article_text",
         source: article.source,
         article_id: article.id,
+        x_article_attempts: xArticleLookup.attempts,
         ...estimateFromXArticleText(article.text, options),
         extracted_chars: article.text.length,
       };
@@ -527,6 +561,7 @@ async function estimateUrl(url, options = {}) {
     final_url: fetched.final_url,
     title,
     mode: "article_text",
+    warnings: xArticleLookup?.error ? [`X article extraction failed after ${xArticleLookup.attempts} attempt(s): ${xArticleLookup.error}`] : undefined,
     ...estimateFromText(text, options),
     extracted_chars: text.length,
   };
@@ -562,6 +597,7 @@ module.exports = {
   extractReadableText,
   estimateUrl,
   fetchXArticleFromTweetId,
+  fetchXArticleFromTweetIdWithRetry,
   parseIsoDuration,
   titleFromHtml,
   xArticleFromTweetResultPayload,
