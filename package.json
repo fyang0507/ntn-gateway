@@ -1,7 +1,7 @@
 {
   "name": "ntn-gateway",
   "version": "2.2.0",
-  "description": "Gateway-scoped Notion operations CLI for agent collaboration.",
+  "description": "Agent-native Notion gateway for durable shared state and human/agent workflow coordination.",
   "main": "src/index.js",
   "bin": {
     "ntn-gateway": "bin/ntn-gateway.js"
@@ -14,11 +14,21 @@
   "keywords": [
     "notion",
     "gateway",
-    "cli"
+    "cli",
+    "agent",
+    "collaboration"
   ],
   "author": "",
   "license": "UNLICENSED",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fyang0507/ntn-gateway.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fyang0507/ntn-gateway/issues"
+  },
+  "homepage": "https://github.com/fyang0507/ntn-gateway#readme",
   "type": "commonjs",
   "dependencies": {
     "@notionhq/client": "^5.22.0",
