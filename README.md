@@ -124,4 +124,4 @@ The repository contains a local companion-skill sync script for a configured age
 
 This repository is public so its gateway design can be inspected and discussed. It is **not an npm package**: `package.json` sets `"private": true` to prevent accidental publication.
 
-It is also deliberately **unlicensed** (`"license": "UNLICENSED"`), and no `LICENSE` file grants reuse rights. Public visibility permits reading the source; it does not grant permission to copy, modify, distribute, or use it beyond what applicable law allows. If you would like to use this work, please open an issue to discuss permission.
+It is released under the [MIT License](LICENSE). You may use, copy, modify, and distribute the software under its terms.
