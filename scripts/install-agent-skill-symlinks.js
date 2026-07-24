@@ -38,23 +38,32 @@ function resolveDataRepo() {
   );
 }
 
-const dataRepo = resolveDataRepo();
 const SKILL_DIRS = ["notion-gateway", "technical-reading-bookmark"];
 const LEGACY_SKILL_DIRS = [];
 
-for (const legacySkillDir of LEGACY_SKILL_DIRS) {
-  rmSync(join(dataRepo, ".agents", "skills", legacySkillDir), { recursive: true, force: true });
-}
+// Tolerate an unresolvable data repo, matching outreach-cli and publish-cli.
+// A fresh clone, CI, or anyone who has not set up a data repo yet gets a
+// warning and a zero exit; the build itself stays usable. Re-run this script
+// once NTN_GATEWAY_DATA_REPO is set or a workspace marker is in scope.
+try {
+  const dataRepo = resolveDataRepo();
 
-for (const skillDir of SKILL_DIRS) {
-  const dest = resolve(join(dataRepo, ".agents", "skills", skillDir));
-  const source = resolve(join("skills", skillDir));
-  // Emit a RELATIVE target. An absolute target bakes this machine's checkout
-  // path into the *data repo*, so moving or re-cloning either repo silently
-  // leaves the data repo's committed symlinks pointing at a dead path — and
-  // the data repo never gets rebuilt, so nothing ever corrects it.
-  const linkTarget = relative(dirname(dest), source);
-  rmSync(dest, { recursive: true, force: true });
-  symlinkSync(linkTarget, dest, "dir");
-  console.log(`Agent skill symlink installed -> ${dest} -> ${linkTarget}`);
+  for (const legacySkillDir of LEGACY_SKILL_DIRS) {
+    rmSync(join(dataRepo, ".agents", "skills", legacySkillDir), { recursive: true, force: true });
+  }
+
+  for (const skillDir of SKILL_DIRS) {
+    const dest = resolve(join(dataRepo, ".agents", "skills", skillDir));
+    const source = resolve(join("skills", skillDir));
+    // Emit a RELATIVE target. An absolute target bakes this machine's checkout
+    // path into the *data repo*, so moving or re-cloning either repo silently
+    // leaves the data repo's committed symlinks pointing at a dead path — and
+    // the data repo never gets rebuilt, so nothing ever corrects it.
+    const linkTarget = relative(dirname(dest), source);
+    rmSync(dest, { recursive: true, force: true });
+    symlinkSync(linkTarget, dest, "dir");
+    console.log(`Agent skill symlink installed -> ${dest} -> ${linkTarget}`);
+  }
+} catch (err) {
+  console.log(`Agent skill symlink skipped: ${err.message}`);
 }
