@@ -1,6 +1,6 @@
 const { existsSync, rmSync, symlinkSync } = require("node:fs");
 const { homedir } = require("node:os");
-const { join, resolve } = require("node:path");
+const { dirname, join, relative, resolve } = require("node:path");
 const { loadEnv } = require("../src/config");
 
 const WORKSPACE_MARKER = join(".agents", "workspace.yaml");
@@ -27,9 +27,6 @@ function resolveDataRepo() {
   const envValue = process.env.NTN_GATEWAY_DATA_REPO || process.env.OUTREACH_DATA_REPO;
   if (envValue && envValue.trim()) return expandHome(envValue.trim());
 
-  const localAgentRepo = join(homedir(), "Downloads", "fred-agent");
-  if (existsSync(join(localAgentRepo, WORKSPACE_MARKER))) return localAgentRepo;
-
   const walkup = findWorkspaceMarker(process.cwd());
   if (walkup) return walkup;
 
@@ -50,9 +47,14 @@ for (const legacySkillDir of LEGACY_SKILL_DIRS) {
 }
 
 for (const skillDir of SKILL_DIRS) {
-  const dest = join(dataRepo, ".agents", "skills", skillDir);
+  const dest = resolve(join(dataRepo, ".agents", "skills", skillDir));
   const source = resolve(join("skills", skillDir));
+  // Emit a RELATIVE target. An absolute target bakes this machine's checkout
+  // path into the *data repo*, so moving or re-cloning either repo silently
+  // leaves the data repo's committed symlinks pointing at a dead path — and
+  // the data repo never gets rebuilt, so nothing ever corrects it.
+  const linkTarget = relative(dirname(dest), source);
   rmSync(dest, { recursive: true, force: true });
-  symlinkSync(source, dest, "dir");
-  console.log(`Agent skill symlink installed -> ${dest} -> ${source}`);
+  symlinkSync(linkTarget, dest, "dir");
+  console.log(`Agent skill symlink installed -> ${dest} -> ${linkTarget}`);
 }
