@@ -1,6 +1,6 @@
 {
   "name": "ntn-gateway",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Agent-native Notion gateway for durable shared state and human/agent workflow coordination.",
   "main": "src/index.js",
   "bin": {
