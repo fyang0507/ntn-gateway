@@ -101,6 +101,24 @@ Content:
   (image/video/file/pdf/embed) blocks, nor other inline mention types (user/date/link_preview);
   dry-run lists each of those as a warning so nothing is dropped silently.
 
+Properties (--properties):
+  --properties takes a JSON object (inline or @file.json) keyed by the live property NAME; each
+  value is a simplified scalar the CLI expands into the correct Notion property object (an already-
+  shaped Notion property object is also accepted and passed through). Unknown names fail with
+  property_unknown, non-writable names with property_read_only. Value shape by property type:
+    title, rich_text          string, e.g. "Forward Deployed Engineer"
+    select, status            option-name string, e.g. "Applied" (must be a live option)
+    multi_select              array of option-name strings, e.g. ["ai-infra","backend"]
+    date                      "YYYY-MM-DD" (or full ISO) string, or {"start":"..","end":".."} for a range
+    number                    number, e.g. 120000
+    checkbox                  true or false
+    url, email, phone_number  string, e.g. "https://job-boards.example.com/x"
+    relation, people          array of IDs, e.g. ["<page-id>"] (relation) / ["<user-id>"] (people)
+  The title property is normally set with --title, which fills whatever the title property is named
+  (e.g. a "Company" title column), so it need not be repeated in --properties. Pass null to clear a
+  select/status/url/email/phone_number/number value. See Options below for select/status option
+  rules and Links below for relation linking.
+
 Options (select / multi_select):
   Writing an unrecognized select or multi_select value fails closed with "property_new_option",
   whose details carry "new" (your unrecognized values) and "existing" (the live options) so you
