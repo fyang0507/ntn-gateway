@@ -115,10 +115,10 @@ Tests are mocked: running them must never touch a live Notion workspace.
 
 ```bash
 npm test       # behavior and safety boundaries
-npm run check  # syntax-check the CLI, source, scripts, and tests
+npm run check  # syntax-check the CLI, source, and tests
 ```
 
-The repository contains a local companion-skill sync script for a configured agent data repository. That workstation convenience is intentionally separate from the verification commands above; it is not a package-release step.
+`npm run build` runs the syntax checks without reading workspace configuration or installing skills. The consuming workspace owns linking or installing the complete `skills/notion-gateway/` and `skills/technical-reading-bookmark/` bundles; their source remains in this repository.
 
 ## Publication & license
 

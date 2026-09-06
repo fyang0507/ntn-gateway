@@ -16,6 +16,8 @@ This repo's active product code lives in `bin/`, `src/`, `test/`, `docs/`, and `
 
 Use `docs/` for product decisions, implementation status, and phased design context. Use `skills/` for agent-facing companion instructions that should stay aligned with the CLI contract.
 
+The consuming workspace owns installation of the complete `skills/notion-gateway/` and `skills/technical-reading-bookmark/` bundles; edit their source here. Build hooks must not read workspace configuration or install skills outside this checkout; tests use isolated fixtures.
+
 ## Operating Model
 
 The CLI contract is Gateway-first:
